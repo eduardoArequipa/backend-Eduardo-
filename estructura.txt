@@ -1,0 +1,30 @@
+Proyecto_Comercial_Don_Eduardo/
+├── Componente1_SistemaWeb/
+│   ├── backEnd/
+│   │   ├── app/
+│   │   │   ├── main.py                # Punto de entrada de la aplicación
+│   │   │   ├── database.py            # Configuración de la base de datos
+│   │   │   ├── auth.py               # Lógica de autenticación JWT
+│   │   │   ├── models/               # Modelos SQLAlchemy
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── base.py
+│   │   │   │   ├── enums.py
+│   │   │   │   ├── usuario.py
+│   │   │   │   ├── usuario_rol.py
+│   │   │   │   ├── rol.py
+│   │   │   │   ├── categoria.py
+│   │   │   ├── schemas/              # Esquemas Pydantic
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── usuario.py
+│   │   │   │   ├── rol.py
+│   │   │   │   ├── token.py
+│   │   │   │   ├── proveedor.py
+│   │   │   │   ├── categoria.py
+│   │   │   ├── routes/               # Rutas de la API
+│   │   │   │   ├── usuario.py
+│   │   │   │   ├── auth.py
+│   │   │   │   ├── rol.py
+│   │   │   │   ├── proveedor.py
+│   │   │   │   ├── categoria.py
+│   │   ├── requirements.txt          # Dependencias
+│   │   ├── .env                     # Variables de entorno
