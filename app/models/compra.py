@@ -49,27 +49,5 @@ class Compra(Base):
     def __repr__(self):
         return f"<Compra(compra_id={self.compra_id}, proveedor_id={self.proveedor_id}, total={self.total}, estado='{self.estado}')>"
 
-# *** IMPORTANTE: Necesitarás crear el Enum EstadoCompraEnum ***
-# Crea o modifica backEnd/app/models/enums.py para añadir:
-# import enum
-# class EstadoCompraEnum(str, enum.Enum):
-#     pendiente = "pendiente"
-#     completada = "completada"
-#     anulada = "anulada"
 
-# *** IMPORTANTE: Necesitarás añadir las relaciones inversas en los modelos relacionados ***
-# # backEnd/app/models/proveedor.py (Fragmento)
-# class Proveedor(Base):
-#     # ... columnas ...
-#     # *** AÑADE esta relación si aún no la tienes ***
-#     compras = relationship("Compra", back_populates="proveedor") # Relación 1:N con Compra
-#     # ... otras relaciones ...
-
-# # backEnd/app/models/user.py (Fragmento - o como se llame tu modelo de Usuario)
-# class Usuario(Base): # O User(Base)
-#     # ... columnas ...
-#     # *** AÑADE estas relaciones si aún no las tienes ***
-#     compras_realizadas = relationship("Compra", foreign_keys="[Compra.usuario_id]", back_populates="usuario") # Compras que el usuario realizó
-#     compras_creadas = relationship("Compra", foreign_keys="[Compra.creado_por]", back_populates="creador") # Compras creadas por este usuario
-#     compras_modificadas = relationship("Compra", foreign_keys="[Compra.modificado_por]", back_populates="modificador") # Compras modificadas por este usuario
-#     # ... otras relaciones ...
+ 
