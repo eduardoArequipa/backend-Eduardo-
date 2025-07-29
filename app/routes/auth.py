@@ -1,31 +1,29 @@
 # backEnd/app/routes/auth.py
-from datetime import timedelta, datetime, timezone # Importar timezone
+
+from datetime import timedelta, datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field, EmailStr
-from sqlalchemy.orm import Session, joinedload
-import pytz # Importar pytz para manejar zonas horarias, si no lo tienes, instálalo: pip install pytz
+from sqlalchemy.orm import Session, joinedload # Importar joinedload para cargar relaciones
 
-# Importar tus utilidades de auth
-from .. import auth as auth_utils
+from .. import auth as auth_utils # Asumimos que auth_utils es app/auth.py
 from ..database import get_db
 from ..schemas.token import Token
-from ..schemas.usuario import UsuarioReadAudit
-from ..models.persona import Persona as DBPersona # Añadir esta importación si auth_utils.Persona no es suficiente o no existe
+from ..schemas.usuario import UsuarioReadAudit # Usamos este esquema para /me
+from ..models.persona import Persona as DBPersona # Ya está importado, es correcto
+from ..models.usuario import Usuario # Asegúrate de importar el modelo Usuario explícitamente si auth_utils.Usuario es solo un alias
+from ..models.enums import EstadoEnum # Asegúrate de que EstadoEnum esté importado correctamente
 
 router = APIRouter(
     prefix="/auth",
     tags=["Auth"]
 )
 
-# --- Constantes para el bloqueo de cuenta ---
-MAX_FAILED_ATTEMPTS = 5
+MAX_FAILED_ATTEMPTS = 3
 LOCKOUT_TIME_MINUTES = 15
-# ------------------------------------------
 
-# --- Esquemas Pydantic para los nuevos endpoints ---
 class ForgotPasswordRequest(BaseModel):
     username_or_email: str
 
@@ -34,13 +32,12 @@ class ResetPasswordRequest(BaseModel):
     recovery_code: str
     new_password: str = Field(..., min_length=6, description="La nueva contraseña debe tener al menos 6 caracteres.")
 
-# ---------------------------------------------------
-
-# Helper function to make naive datetimes timezone-aware (UTC)
-# This assumes any naive datetime in your DB is meant to be UTC.
 def make_datetime_utc_aware(dt: Optional[datetime]) -> Optional[datetime]:
+    """
+    Convierte un datetime naive (sin zona horaria) a UTC aware.
+    Si ya es aware o None, lo devuelve tal cual.
+    """
     if dt and dt.tzinfo is None:
-        # Assume it's UTC if it's naive, then make it aware
         return dt.replace(tzinfo=timezone.utc)
     return dt
 
@@ -56,9 +53,11 @@ def login_for_access_token(
     """
     print(f"\n--- Intento de Login para usuario: {form_data.username} ---")
 
-    user = db.query(auth_utils.Usuario).options(
-        joinedload(auth_utils.Usuario.persona)
-    ).filter(auth_utils.Usuario.nombre_usuario == form_data.username).first()
+    # Cargar el usuario, incluyendo su persona asociada y sus roles a través de la persona
+    # Aquí está la corrección clave:
+    user = db.query(Usuario).options( # Usar directamente el modelo Usuario si está importado
+        joinedload(Usuario.persona).joinedload(DBPersona.roles) # <-- ¡CORREGIDO AQUÍ!
+    ).filter(Usuario.nombre_usuario == form_data.username).first()
 
     if not user:
         print(f"DEBUG: Usuario '{form_data.username}' no encontrado.")
@@ -68,10 +67,7 @@ def login_for_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    print(f"DEBUG: Usuario encontrado. ID: {user.usuario_id}, Nombre: {user.nombre_usuario}")
-    print(f"DEBUG: Estado inicial: {user.estado}, Intentos fallidos: {user.intentos_fallidos}, Bloqueado hasta: {user.bloqueado_hasta}")
-
-    # Make user.bloqueado_hasta timezone-aware before comparison
+    # Asegurarse de que el campo `bloqueado_hasta` sea timezone-aware para la comparación
     user_bloqueado_hasta_aware = make_datetime_utc_aware(user.bloqueado_hasta)
     current_utc_time = datetime.now(timezone.utc)
 
@@ -86,8 +82,7 @@ def login_for_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    if user.estado != auth_utils.EstadoEnum.activo:
-         print(f"DEBUG: Usuario '{user.nombre_usuario}' inactivo o bloqueado por administración.")
+    if user.estado != EstadoEnum.activo: # Usa EstadoEnum directamente si lo importaste
          raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Usuario inactivo o bloqueado",
@@ -96,7 +91,6 @@ def login_for_access_token(
 
     if not auth_utils.verify_password(form_data.password, user.contraseña):
         user.intentos_fallidos = (user.intentos_fallidos or 0) + 1
-        print(f"DEBUG: Contraseña incorrecta. Intentos fallidos incrementados a: {user.intentos_fallidos}")
         try:
             db.add(user)
             db.commit()
@@ -111,8 +105,8 @@ def login_for_access_token(
             )
 
         if user.intentos_fallidos >= MAX_FAILED_ATTEMPTS:
-            user.estado = auth_utils.EstadoEnum.bloqueado
-            user.bloqueado_hasta = datetime.now(timezone.utc) # Store as timezone-aware
+            user.estado = EstadoEnum.bloqueado # Usa EstadoEnum directamente
+            user.bloqueado_hasta = datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_TIME_MINUTES) # Almacenar como timezone-aware
             print(f"DEBUG: ¡Límite de intentos alcanzado! Bloqueando usuario '{user.nombre_usuario}'.")
             print(f"DEBUG: Nuevo estado: {user.estado}, Bloqueado hasta: {user.bloqueado_hasta}")
             try:
@@ -136,9 +130,9 @@ def login_for_access_token(
 
     print(f"DEBUG: Contraseña correcta para '{user.nombre_usuario}'.")
     user.intentos_fallidos = 0
-    user.bloqueado_hasta = None # Resetting to None is fine, it's naive
-    if user.estado == auth_utils.EstadoEnum.bloqueado:
-        user.estado = auth_utils.EstadoEnum.activo
+    user.bloqueado_hasta = None # Reiniciar a None es correcto
+    if user.estado == EstadoEnum.bloqueado: # Usa EstadoEnum directamente
+        user.estado = EstadoEnum.activo # Usa EstadoEnum directamente
         print(f"DEBUG: Usuario '{user.nombre_usuario}' activado después de login exitoso.")
 
     print(f"DEBUG: Reiniciando intentos fallidos y bloqueo. Nuevos valores: {user.intentos_fallidos}, {user.bloqueado_hasta}, {user.estado}")
@@ -155,9 +149,16 @@ def login_for_access_token(
             detail="Error interno del servidor al procesar el login exitoso."
         )
 
+    # Ahora obtén los roles de la persona asociada al usuario
+    # El objeto `user` ya debería tener `persona` y `persona.roles` cargados debido al joinedload inicial
+    user_roles = [rol.nombre_rol for rol in user.persona.roles] if user.persona and user.persona.roles else []
+    print(f"DEBUG: Roles obtenidos para '{user.nombre_usuario}': {user_roles}")
+
+
     access_token_expires = timedelta(minutes=auth_utils.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = auth_utils.create_access_token(
-        data={"sub": user.nombre_usuario},
+        # Incluye los roles en el token JWT
+        data={"sub": user.nombre_usuario, "roles": user_roles},
         expires_delta=access_token_expires
     )
     print("DEBUG: Token de acceso generado exitosamente.")
@@ -173,28 +174,32 @@ async def forgot_password_request(
     Inicia el proceso de recuperación de contraseña.
     Genera un código, lo almacena y lo envía al correo del usuario.
     """
-    user = db.query(auth_utils.Usuario).options(
-        joinedload(auth_utils.Usuario.persona)
-    ).filter(auth_utils.Usuario.nombre_usuario == request.username_or_email).first()
+    # Buscar usuario por nombre de usuario
+    user = db.query(Usuario).options( # Usar directamente Usuario
+        joinedload(Usuario.persona) # Cargar la persona asociada
+    ).filter(Usuario.nombre_usuario == request.username_or_email).first()
 
+    # Si no se encuentra por nombre de usuario, buscar por email de la persona asociada
     if not user:
         persona = db.query(DBPersona).options(
-            joinedload(DBPersona.usuario)
+            joinedload(DBPersona.usuario) # Cargar el usuario asociado a la persona
         ).filter(DBPersona.email == request.username_or_email).first()
         if persona and persona.usuario:
             user = persona.usuario
 
     if not user:
         print(f"ADVERTENCIA: Intento de recuperación para usuario/email no encontrado: {request.username_or_email}")
+        # Se devuelve un mensaje genérico por seguridad para no revelar si el usuario existe o no
         return {"message": "Si la dirección de correo o el usuario son válidos, se ha enviado un código de recuperación."}
 
+    # Asegurarse de que la persona tenga un email antes de intentar enviar
     user_email = user.persona.email if user.persona else None
     if not user_email:
         print(f"ADVERTENCIA: Usuario '{user.nombre_usuario}' no tiene un correo electrónico asociado para recuperación. ID: {user.usuario_id}")
         return {"message": "Si la dirección de correo o el usuario son válidos, se ha enviado un código de recuperación."}
 
     recovery_code = auth_utils.generate_recovery_code()
-    expiration_time = datetime.now(timezone.utc) + timedelta(minutes=auth_utils.RECOVERY_CODE_EXPIRE_MINUTES) # Store as timezone-aware
+    expiration_time = datetime.now(timezone.utc) + timedelta(minutes=auth_utils.RECOVERY_CODE_EXPIRE_MINUTES) # Almacenar como timezone-aware
 
     user.codigo_recuperacion = recovery_code
     user.expiracion_codigo_recuperacion = expiration_time
@@ -203,7 +208,7 @@ async def forgot_password_request(
         db.commit()
         db.refresh(user)
         print(f"DEBUG: Código de recuperación generado para '{user.nombre_usuario}'. Código: {recovery_code}")
-        print(f"DEBUG: Expiración código guardado (desde generación): {user.expiracion_codigo_recuperacion} (tzinfo: {user.expiracion_codigo_recuperacion.tzinfo})") # Añadido
+        print(f"DEBUG: Expiración código guardado (desde generación): {user.expiracion_codigo_recuperacion} (tzinfo: {user.expiracion_codigo_recuperacion.tzinfo})")
     except Exception as e:
         db.rollback()
         print(f"ERROR: Fallo al guardar código de recuperación para '{user.nombre_usuario}': {e}")
@@ -212,6 +217,7 @@ async def forgot_password_request(
             detail="Error interno del servidor al procesar la solicitud de recuperación."
         )
 
+    # Aquí iría la lógica para enviar el email real
     auth_utils.send_recovery_email(user_email, user.nombre_usuario, recovery_code)
     print(f"DEBUG: Correo de recuperación enviado (simulado/real) a {user_email}")
 
@@ -227,10 +233,12 @@ def reset_password(
     Restablece la contraseña de un usuario usando un código de recuperación válido.
     También desbloquea y activa la cuenta si estaba bloqueada/inactiva.
     """
-    user = db.query(auth_utils.Usuario).options(
-        joinedload(auth_utils.Usuario.persona)
-    ).filter(auth_utils.Usuario.nombre_usuario == request.username_or_email).first()
+    # Buscar usuario por nombre de usuario
+    user = db.query(Usuario).options( # Usar directamente Usuario
+        joinedload(Usuario.persona) # Cargar la persona asociada
+    ).filter(Usuario.nombre_usuario == request.username_or_email).first()
 
+    # Si no se encuentra por nombre de usuario, buscar por email de la persona asociada
     if not user:
         persona = db.query(DBPersona).options(
             joinedload(DBPersona.usuario)
@@ -244,21 +252,21 @@ def reset_password(
             detail="Usuario o correo electrónico no encontrado."
         )
 
-    # --- AÑADE ESTAS LÍNEAS DE DEPURACIÓN AQUÍ ---
+    # --- LÍNEAS DE DEPURACIÓN ---
     print(f"\n--- DEBUGGING PASSWORD RESET EXPIRATION ---")
     print(f"  Código recibido: {request.recovery_code}")
     print(f"  Código en DB (antes de helper): {user.codigo_recuperacion}")
     print(f"  Expiración en DB (antes de helper): {user.expiracion_codigo_recuperacion} (tzinfo: {user.expiracion_codigo_recuperacion.tzinfo if user.expiracion_codigo_recuperacion else 'None'})")
     # ---------------------------------------------
 
-    # Make user.expiracion_codigo_recuperacion timezone-aware before comparison
+    # Asegurarse de que el campo `expiracion_codigo_recuperacion` sea timezone-aware
     user_expiracion_codigo_recuperacion_aware = make_datetime_utc_aware(user.expiracion_codigo_recuperacion)
     current_utc_time = datetime.now(timezone.utc)
 
-    # --- AÑADE ESTAS LÍNEAS DE DEPURACIÓN AQUÍ ---
+    # --- LÍNEAS DE DEPURACIÓN ---
     print(f"  Expiración en DB (después de helper): {user_expiracion_codigo_recuperacion_aware} (tzinfo: {user_expiracion_codigo_recuperacion_aware.tzinfo if user_expiracion_codigo_recuperacion_aware else 'None'})")
     print(f"  Tiempo UTC Actual: {current_utc_time} (tzinfo: {current_utc_time.tzinfo})")
-    print(f"  ¿current_utc_time > user_expiracion_codigo_recuperacion_aware?: {current_utc_time > (user_expiracion_codigo_recuperacion_aware or datetime.min.replace(tzinfo=timezone.utc))}") # Compara con un mínimo si es None
+    print(f"  ¿current_utc_time > user_expiracion_codigo_recuperacion_aware?: {current_utc_time > (user_expiracion_codigo_recuperacion_aware or datetime.min.replace(tzinfo=timezone.utc))}")
     # ---------------------------------------------
 
     if not user.codigo_recuperacion or user.codigo_recuperacion != request.recovery_code:
@@ -269,10 +277,15 @@ def reset_password(
         )
 
     if user_expiracion_codigo_recuperacion_aware is None or current_utc_time > user_expiracion_codigo_recuperacion_aware:
+        # Si el código expiró o es nulo (ya usado/no generado), se limpia y se informa
         user.codigo_recuperacion = None
-        user.expiracion_codigo_recuperacion = None # This is fine to reset to None (naive)
-        db.add(user)
-        db.commit()
+        user.expiracion_codigo_recuperacion = None # Esto es correcto para reiniciar a None (naive o no)
+        try:
+            db.add(user)
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            print(f"ERROR: Fallo al limpiar código expirado para '{user.nombre_usuario}': {e}")
         print(f"ADVERTENCIA: Intento de reinicio de contraseña fallido para '{user.nombre_usuario}'. Código expirado.")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -281,11 +294,12 @@ def reset_password(
 
     user.contraseña = auth_utils.get_password_hash(request.new_password)
 
+    # Reiniciar campos de recuperación y estado de bloqueo
     user.codigo_recuperacion = None
-    user.expiracion_codigo_recuperacion = None # This is fine to reset to None (naive)
+    user.expiracion_codigo_recuperacion = None # Esto es correcto para reiniciar a None
     user.intentos_fallidos = 0
-    user.bloqueado_hasta = None # This is fine to reset to None (naive)
-    user.estado = auth_utils.EstadoEnum.activo
+    user.bloqueado_hasta = None # Esto es correcto para reiniciar a None
+    user.estado = EstadoEnum.activo # Asegurarse de que el usuario esté activo
 
     try:
         db.add(user)
@@ -307,5 +321,7 @@ def reset_password(
 def read_users_me(current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user)):
     """
     Obtiene la información del usuario actualmente autenticado.
+    Esta función depende de que `auth_utils.get_current_active_user`
+    cargue correctamente las relaciones `persona` y `roles` del usuario.
     """
     return current_user

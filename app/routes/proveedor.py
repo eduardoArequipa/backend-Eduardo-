@@ -4,52 +4,29 @@ from typing import List, Optional, Union
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
-
-# Importa tus utilidades de auth y la dependencia get_db
-from .. import auth as auth_utils # Importa el módulo auth con alias
-
+from .. import auth as auth_utils 
 from ..database import get_db
-
-# Importa el modelo SQLAlchemy Proveedor
-from ..models.proveedor import Proveedor as DBProveedor # Usa el alias DBProveedor
-# Importa los modelos relacionados para crear/verificar
+from ..models.proveedor import Proveedor as DBProveedor 
 from ..models.persona import Persona as DBPersona
 from ..models.empresa import Empresa as DBEmpresa
-
-# Importa el Enum para el estado
 from ..models.enums import EstadoEnum
-
-# Importar tus esquemas Pydantic para Proveedor
 from ..schemas.proveedor import (
     ProveedorBase,
     ProveedorCreate,
-    ProveedorUpdate, # *** Usa el esquema MODIFICADO que permite datos anidados ***
-    Proveedor, # Esquema de lectura
-    ProveedorNested # Esquema de lectura anidada
+    ProveedorUpdate, 
+    Proveedor, 
 )
-
-# Importa los esquemas de creación y ACTUALIZACIÓN para Persona y Empresa
-from ..schemas.persona import PersonaCreate, PersonaUpdate # *** Importa PersonaUpdate ***
-from ..schemas.empresa import EmpresaCreate, EmpresaUpdate # *** Importa EmpresaUpdate ***
-
-# Importa el modelo de Usuario si necesitas acceder a él (ej. para joinedload de Persona.usuario)
-from ..models.usuario import Usuario as DBUsuario
-
 
 router = APIRouter(
     prefix="/proveedores",
     tags=["proveedores"]
 )
 
-# Define qué roles pueden gestionar proveedores (ej. Administrador, Empleado)
-# Asegúrate de que estos nombres de rol coinciden exactamente con los de tu base de datos
 ROLES_CAN_MANAGE_PROVEEDORES = ["Administrador", "Empleado"]
 
-
-# --- Endpoint para Crear un Nuevo Proveedor (Con lógica de creación/asociación combinada) ---
 @router.post("/", response_model=Proveedor, status_code=status.HTTP_201_CREATED)
 def create_proveedor(
-    proveedor_data: ProveedorCreate, # Usa el esquema modificado con opciones de creación/asociación
+    proveedor_data: ProveedorCreate, 
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PROVEEDORES))
 ):
@@ -58,23 +35,16 @@ def create_proveedor(
     Debe proporcionar exactamente una de las siguientes opciones: persona_id, empresa_id, persona_data, o empresa_data.
     Solo accesible por usuarios con permisos de gestión de proveedores.
     """
-    # Usamos un bloque try/except para manejar posibles errores y hacer rollback si es necesario
     try:
-        proveedor_id_to_associate: Optional[int] = None # ID de la Persona o Empresa a asociar
-        is_persona = False # Bandera para saber si es un proveedor Persona o Empresa
-
-        # *** 1. Determinar la entidad a asociar (crear nueva o usar existente) ***
+        proveedor_id_to_associate: Optional[int] = None 
+        is_persona = False 
 
         if proveedor_data.persona_data:
-            # Opción 1: Crear una nueva Persona y asociarla
             is_persona = True
-            # Validar unicidad de CI/Identificacion si no lo hace la DB o necesitas un error más específico
             if proveedor_data.persona_data.ci:
                 db_persona_ci = db.query(DBPersona).filter(DBPersona.ci == proveedor_data.persona_data.ci).first()
                 if db_persona_ci:
                      raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Ya existe una persona con este CI: {proveedor_data.persona_data.ci}")
-
-            # Crear la nueva Persona
             new_persona = DBPersona(**proveedor_data.persona_data.model_dump(exclude_unset=True))
             db.add(new_persona)
             db.flush() # Obtener el ID de la nueva persona

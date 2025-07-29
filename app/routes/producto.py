@@ -2,21 +2,17 @@ from typing import List, Optional
 import os
 import shutil
 from decimal import Decimal
-
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
-
 from .. import auth as auth_utils
 from ..database import get_db
-
 from ..models.producto import Producto as DBProducto
 from ..models.enums import EstadoEnum
 from ..models.categoria import Categoria as DBCategoria
 from ..models.usuario import Usuario as DBUsuario
 from ..models.unidad_medida import UnidadMedida as DBUnidadMedida
 from ..models.marca import Marca as DBMarca
-
 from ..schemas.producto import (
     ProductoBase,
     ProductoCreate,
@@ -51,34 +47,28 @@ router = APIRouter(
 
 ROLES_CAN_MANAGE_PRODUCTS = ["Administrador", "Empleado"]
 
-# --- Endpoint para Crear un Nuevo Producto ---
 @router.post("/", response_model=Producto, status_code=status.HTTP_201_CREATED)
 def create_producto(
     producto: ProductoCreate,
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PRODUCTS))
 ):
-    # Validar que la categoría exista
     db_categoria = db.query(DBCategoria).filter(DBCategoria.categoria_id == producto.categoria_id).first()
     if db_categoria is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Categoría no encontrada.")
 
-    # Validar que la unidad de medida exista
     db_unidad_medida = db.query(DBUnidadMedida).filter(DBUnidadMedida.unidad_id == producto.unidad_medida_id).first()
     if db_unidad_medida is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unidad de medida no encontrada.")
 
-    # Validar que la marca exista
     db_marca = db.query(DBMarca).filter(DBMarca.marca_id == producto.marca_id).first()
     if db_marca is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Marca no encontrada.")
 
-    # Validar que el código del producto sea único
     db_producto_codigo = db.query(DBProducto).filter(DBProducto.codigo == producto.codigo).first()
     if db_producto_codigo:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ya existe un producto con este código.")
 
-    # Validar que metros_por_rollo solo se proporcione si la unidad es "metro"
     if producto.metros_por_rollo is not None and db_unidad_medida.nombre_unidad != "Metro":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El campo metros_por_rollo solo es válido para unidades de medida 'metro'.")
 
@@ -105,7 +95,6 @@ def create_producto(
 
     return db_producto_for_response
 
-# --- Endpoint para Listar Productos ---
 @router.get("/", response_model=List[Producto])
 def read_productos(
     estado: Optional[EstadoEnum] = Query(None, description="Filtrar por estado"),
@@ -119,11 +108,6 @@ def read_productos(
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PRODUCTS))
 ):
-    """
-    Obtiene una lista de Productos con opciones de filtro, búsqueda y paginación.
-    Accesible solo por usuarios con permisos de gestión de productos (por defecto).
-    Incluye la categoría, unidad de medida, marca, creador y modificador asociados.
-    """
     query = db.query(DBProducto).options(
         joinedload(DBProducto.categoria),
         joinedload(DBProducto.creador),
@@ -159,7 +143,28 @@ def read_productos(
 
     return productos
 
-# --- Endpoint para Obtener un Producto por ID ---
+
+@router.get("/low-stock", response_model=List[Producto])
+def get_low_stock_products(
+    db: Session = Depends(get_db),
+    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user) # Cualquier usuario logeado puede ver esto
+):
+    """
+    Obtiene una lista de productos cuyo stock actual es igual o menor que su stock mínimo.
+    Accesible por cualquier usuario autenticado.
+    """
+    low_stock_products = db.query(DBProducto).options(
+        joinedload(DBProducto.categoria),
+        joinedload(DBProducto.unidad_medida),
+        joinedload(DBProducto.marca),
+        joinedload(DBProducto.creador),
+        joinedload(DBProducto.modificador)
+    ).filter(
+        DBProducto.stock <= DBProducto.stock_minimo,
+        DBProducto.estado == EstadoEnum.activo 
+    ).all()
+
+    return low_stock_products
 @router.get("/{producto_id}", response_model=Producto)
 def read_producto(
     producto_id: int,
@@ -179,7 +184,6 @@ def read_producto(
 
     return producto
 
-# --- Endpoint para Actualizar un Producto por ID ---
 @router.put("/{producto_id}", response_model=Producto)
 def update_producto(
     producto_id: int,
@@ -219,27 +223,20 @@ def update_producto(
         if db_categoria is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La nueva Categoría especificada no fue encontrada.")
 
-    # Validar y actualizar unidad_medida_id
     if 'unidad_medida_id' in update_data and update_data['unidad_medida_id'] is not None and update_data['unidad_medida_id'] != db_producto.unidad_medida_id:
         db_unidad_medida = db.query(DBUnidadMedida).filter(DBUnidadMedida.unidad_id == update_data['unidad_medida_id']).first()
         if db_unidad_medida is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La nueva Unidad de Medida especificada no fue encontrada.")
 
-    # Validar y actualizar marca_id
     if 'marca_id' in update_data and update_data['marca_id'] is not None and update_data['marca_id'] != db_producto.marca_id:
         db_marca = db.query(DBMarca).filter(DBMarca.marca_id == update_data['marca_id']).first()
         if db_marca is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La nueva Marca especificada no fue encontrada.")
 
-    # Validar que metros_por_rollo solo se proporcione si la unidad es "metro"
     if 'metros_por_rollo' in update_data and update_data['metros_por_rollo'] is not None:
         db_unidad_medida = db.query(DBUnidadMedida).filter(DBUnidadMedida.unidad_id == db_producto.unidad_medida_id).first()
         if db_unidad_medida.nombre_unidad != "Metro":
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El campo metros_por_rollo solo es válido para unidades de medida 'metro'.")
-        # Convertir stock si se actualiza metros_por_rollo y la unidad es "metro"
-        #if 'stock' in update_data  and update_data['metros_por_rollo'] != db_producto.metros_por_rollo and db_unidad_medida.nombre_unidad == "Metro":
-            #update_data['stock'] = update_data['stock'] * update_data['metros_por_rollo']
-
     for field, value in update_data.items():
         setattr(db_producto, field, value)
 
@@ -248,7 +245,6 @@ def update_producto(
     db.commit()
     db.refresh(db_producto)
 
-    # Cargar las relaciones para la respuesta después de la actualización
     db_producto_for_response = db.query(DBProducto).options(
         joinedload(DBProducto.categoria),
         joinedload(DBProducto.creador),
@@ -259,8 +255,7 @@ def update_producto(
 
     return db_producto_for_response
 
-# --- Endpoint para Eliminar/Desactivar un Producto por ID ---
-@router.delete("/{producto_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.patch("/{producto_id}/inactivar", status_code=status.HTTP_204_NO_CONTENT)
 def delete_producto(
     producto_id: int,
     db: Session = Depends(get_db),
@@ -284,8 +279,7 @@ def delete_producto(
 
     return {}
 
-# --- ENDPOINT: Activar un Producto por ID ---
-@router.patch("/{producto_id}", response_model=Producto)
+@router.patch("/{producto_id}/activar", response_model=Producto)
 def activate_producto(
     producto_id: int,
     db: Session = Depends(get_db),
@@ -317,7 +311,7 @@ def activate_producto(
 def read_producto_by_code(
     codigo: str,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PRODUCTS))
+  #  current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PRODUCTS))
 ):
     """
     Obtiene un Producto específico buscando por su código de barras.
@@ -334,3 +328,5 @@ def read_producto_by_code(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Producto con código '{codigo}' no encontrado.")
 
     return producto
+
+

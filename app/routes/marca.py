@@ -18,16 +18,13 @@ from ..schemas.marca import (
     Marca,
 )
 
-# Define el router para las rutas de marcas
 router = APIRouter(
     prefix="/marcas",
     tags=["marcas"]
 )
 
-# Roles que tienen permiso para gestionar marcas
 ROLES_CAN_MANAGE_MARCAS = ["Administrador", "Empleado"]
 
-# --- Endpoint para Crear una Nueva Marca ---
 @router.post("/", response_model=Marca, status_code=status.HTTP_201_CREATED)
 def create_marca(
     marca: MarcaCreate,
@@ -53,7 +50,6 @@ def create_marca(
 
     return new_marca
 
-# --- Endpoint para Listar Marcas ---
 @router.get("/", response_model=List[Marca])
 def read_marcas(
     estado: Optional[EstadoEnum] = Query(None, description="Filtrar por estado"),
@@ -79,7 +75,6 @@ def read_marcas(
 
     return marcas
 
-# --- Endpoint para Obtener una Marca por ID ---
 @router.get("/{marca_id}", response_model=Marca)
 def read_marca(
     marca_id: int,
@@ -97,11 +92,10 @@ def read_marca(
 
     return marca
 
-# --- Endpoint para Actualizar una Marca por ID ---
 @router.put("/{marca_id}", response_model=Marca)
 def update_marca(
     marca_id: int,
-    marca_update: MarcaCreate, # Usamos MarcaCreate para los campos actualizables
+    marca_update: MarcaCreate, 
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_MARCAS))
 ):
@@ -115,8 +109,6 @@ def update_marca(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Marca no encontrada.")
 
     update_data = marca_update.model_dump(exclude_unset=True)
-
-    # Validar que el nombre de la marca sea único si se intenta actualizar
     if 'nombre_marca' in update_data and update_data['nombre_marca'] != db_marca.nombre_marca:
         existing_marca_with_new_name = db.query(DBMarca).filter(DBMarca.nombre_marca == update_data['nombre_marca']).first()
         if existing_marca_with_new_name and existing_marca_with_new_name.marca_id != marca_id:
@@ -125,7 +117,6 @@ def update_marca(
     for field, value in update_data.items():
         setattr(db_marca, field, value)
 
-    db_marca.modificado_por = current_user.usuario_id
 
     db.commit()
     db.refresh(db_marca)
@@ -151,7 +142,6 @@ def delete_marca(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La marca ya está inactiva.")
 
     db_marca.estado = EstadoEnum.inactivo
-    db_marca.modificado_por = current_user.usuario_id
 
     db.commit()
 
@@ -177,7 +167,6 @@ def activate_marca(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La marca ya está activa.")
 
     db_marca.estado = EstadoEnum.activo
-    db_marca.modificado_por = current_user.usuario_id
 
     db.commit()
     db.refresh(db_marca)

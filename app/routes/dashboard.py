@@ -14,15 +14,12 @@ router = APIRouter(
 
 @router.get("/", response_model=DashboardData)
 def get_dashboard_data(db: Session = Depends(get_db)):
-    # --- 1. KPIs Cards ---
-    # Ventas del mes actual
+
     start_of_month = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     query_ventas_mes = text("SELECT COALESCE(SUM(total), 0) FROM ventas WHERE fecha_venta >= :start_date AND estado = 'activa'")
     ventas_mes = db.execute(query_ventas_mes, {"start_date": start_of_month}).scalar()
 
-    # Ganancia Bruta del mes (simplificado)
-    # Nota: Una consulta más precisa requeriría joins complejos. Para empezar, podemos hacer una estimación.
-    # O, mejor, podrías crear una vista para esto. Por ahora, un placeholder:
+
     query_ganancia = text("""
         SELECT COALESCE(SUM(dv.cantidad * (dv.precio_unitario - p.precio_compra)), 0)
         FROM detalle_ventas dv

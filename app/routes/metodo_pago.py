@@ -1,18 +1,17 @@
-# Componente1_SistemaWeb/backEnd/app/routes/metodo_pago.py
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
-from typing import Optional, List # Importar List para response_model
+from typing import Optional, List 
 
-from app.database import get_db # Tu dependencia para obtener la sesión de DB
-from app.schemas.metodo_pago import MetodoPago, MetodoPagoCreate # Tus esquemas Pydantic
-from app.models.metodo_pago import MetodoPago as DBMethPago # <--- Importamos el modelo SQLAlchemy directamente
+from app.database import get_db 
+from app.schemas.metodo_pago import MetodoPago, MetodoPagoCreate 
+from app.models.metodo_pago import MetodoPago as DBMethPago 
 from app.models.enums import EstadoEnum
 router = APIRouter(
     prefix="/metodos_pago",
     tags=["Métodos de Pago"]
 )
 
-@router.get("/", response_model=List[MetodoPago]) # Usamos List para Pydantic v1, si estás en Pydantic v2 puedes usar list[MetodoPago]
+@router.get("/", response_model=List[MetodoPago]) 
 def read_metodos_pago(
     skip: int = 0,
     limit: int = 100,
@@ -40,12 +39,10 @@ def create_new_metodo_pago(
     metodo_pago: MetodoPagoCreate,
     db: Session = Depends(get_db)
 ):
-    # Verificar si ya existe un método de pago con el mismo nombre
     existing_metodo = db.query(DBMethPago).filter(DBMethPago.nombre_metodo == metodo_pago.nombre_metodo).first()
     if existing_metodo:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ya existe un método de pago con ese nombre.")
 
-    # Lógica de creación directamente aquí
     db_metodo_pago = DBMethPago(
         nombre_metodo=metodo_pago.nombre_metodo,
         estado=EstadoEnum.activo
