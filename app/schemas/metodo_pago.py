@@ -1,5 +1,6 @@
 # backEnd/app/schemas/metodo_pago.py
 from pydantic import BaseModel
+from .pagination import Pagination # Importar la clase Pagination
 
 class MetodoPagoBase(BaseModel):
     nombre_metodo: str
@@ -20,3 +21,4 @@ class MetodoPago(MetodoPagoNested):
 
     class Config:
         from_attributes = True
+

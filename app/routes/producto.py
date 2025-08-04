@@ -18,7 +18,8 @@ from ..schemas.producto import (
     ProductoCreate,
     ProductoUpdate,
     Producto,
-    ProductoNested
+    ProductoNested,
+    ProductoPagination # Importar el nuevo esquema de paginación
 )
 
 UPLOAD_DIR_PRODUCTS = "static/uploads/products"
@@ -95,14 +96,14 @@ def create_producto(
 
     return db_producto_for_response
 
-@router.get("/", response_model=List[Producto])
+@router.get("/", response_model=ProductoPagination) # Cambiado a ProductoPagination
 def read_productos(
     estado: Optional[EstadoEnum] = Query(None, description="Filtrar por estado"),
     search: Optional[str] = Query(None, description="Texto de búsqueda por código o nombre"),
     categoria_id: Optional[int] = Query(None, description="Filtrar por Categoría (ID)"),
     unidad_medida_id: Optional[int] = Query(None, description="Filtrar por Unidad de Medida (ID)"),
     marca_id: Optional[int] = Query(None, description="Filtrar por Marca (ID)"),
-    min_stock: Optional[Decimal] = Query(None, description="Filtrar por productos con stock mínimo"),  # Cambiado a Decimal
+    min_stock: Optional[Decimal] = Query(None, description="Filtrar por productos con stock mínimo"),
     skip: int = Query(0, ge=0, description="Número de elementos a omitir (paginación)"),
     limit: int = Query(100, gt=0, description="Número máximo de elementos a retornar (paginación)"),
     db: Session = Depends(get_db),
@@ -139,9 +140,10 @@ def read_productos(
     if min_stock is not None:
         query = query.filter(DBProducto.stock >= min_stock)
 
+    total = query.count() # Contar el total de productos antes de aplicar skip/limit
     productos = query.offset(skip).limit(limit).all()
 
-    return productos
+    return {"items": productos, "total": total} # Devolver el objeto de paginación
 
 
 @router.get("/low-stock", response_model=List[Producto])
@@ -328,5 +330,3 @@ def read_producto_by_code(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Producto con código '{codigo}' no encontrado.")
 
     return producto
-
-

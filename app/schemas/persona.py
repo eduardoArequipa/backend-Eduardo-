@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field, EmailStr, ConfigDict, validator
 from typing import Optional, List
 from ..models.enums import EstadoEnum, GeneroEnum
 from .rol import RolBase, RolInDB
+from .pagination import Pagination # Importar la clase Pagination
 
 # --- Esquema para anidar datos de Usuario en la creación de Persona ---
 class UsuarioCreateSchemaForPersona(BaseModel):
@@ -50,8 +51,7 @@ class PersonaCreate(PersonaBase):
     usuario_data: Optional[UsuarioCreateSchemaForPersona] = Field(None, description="Datos para crear un Usuario asociado.")
 
 # --- Esquema para actualizar una Persona ---
-# Hereda de PersonaBase para reutilizar los validadores.
-# Los campos se re-declaran como opcionales para permitir actualizaciones parciales (PATCH).
+# Hereda de PersonaBase y hace obligatorios los campos requeridos para nuevos registros.
 class PersonaUpdate(PersonaBase):
     nombre: Optional[str] = Field(None, min_length=3, max_length=100)
     apellido_paterno: Optional[str] = Field(None, min_length=3, max_length=100)
@@ -79,7 +79,6 @@ class PersonaNested(PersonaInDB):
     pass
 
 # --- Esquema para la respuesta de paginación ---
-class PersonaPaginated(BaseModel):
-    total: int
-    personas: List[PersonaWithRoles]
-    model_config = ConfigDict(from_attributes=True)
+class PersonaPagination(Pagination[PersonaWithRoles]):
+    """Esquema para la respuesta paginada de personas."""
+    pass

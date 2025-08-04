@@ -2,6 +2,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Path, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
+from sqlalchemy import func
 
 from .. import auth as auth_utils 
 
@@ -12,6 +13,7 @@ from ..schemas.categoria import (
     CategoriaCreate,
     CategoriaUpdate,
     Categoria,
+    CategoriaPagination # Importar el nuevo esquema de paginación
 )
 
 router = APIRouter(
@@ -43,7 +45,8 @@ def create_categoria(
     Crea una nueva Categoría.
     Solo accesible por usuarios con permisos de gestión de categorías.
     """
-    db_categoria = db.query(DBCategoria).filter(DBCategoria.nombre_categoria == categoria.nombre_categoria).first()
+    db_categoria = db.query(DBCategoria).filter(func.strip(func.lower(DBCategoria.nombre_categoria)) == categoria.nombre_categoria.lower().strip()
+).first()
     if db_categoria:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ya existe una categoría con este nombre.")
 
@@ -55,7 +58,7 @@ def create_categoria(
 
     return new_categoria
 
-@router.get("/", response_model=List[Categoria])
+@router.get("/", response_model=CategoriaPagination) # Cambiado a CategoriaPagination
 def read_categorias(
     estado: Optional[EstadoEnum] = Query(None, description="Filtrar por estado"),
     search: Optional[str] = Query(None, description="Texto de búsqueda por nombre"),
@@ -76,9 +79,10 @@ def read_categorias(
     if search:
         query = query.filter(DBCategoria.nombre_categoria.ilike(f"%{search}%"))
 
+    total = query.count() # Contar el total de categorías antes de aplicar skip/limit
     categorias = query.offset(skip).limit(limit).all()
 
-    return categorias
+    return {"items": categorias, "total": total} # Devolver el objeto de paginación
 
 @router.get("/{categoria_id}", response_model=Categoria)
 def read_categoria(

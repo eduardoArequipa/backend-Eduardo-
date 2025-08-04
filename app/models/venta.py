@@ -7,7 +7,7 @@ from .enums import EstadoVentaEnum
 class Venta(Base):
     __tablename__ = "ventas"
     venta_id = Column(Integer, primary_key=True, index=True)
-    persona_id = Column(Integer, ForeignKey("personas.persona_id"), nullable=False) # Ahora se relaciona con Persona
+    persona_id = Column(Integer, ForeignKey("personas.persona_id"), nullable=True) # Ahora se relaciona con Persona
     fecha_venta = Column(TIMESTAMP, default=datetime.now)
     total = Column(DECIMAL(10, 2), nullable=False)
     metodo_pago_id = Column(Integer, ForeignKey("metodos_pago.metodo_pago_id"), nullable=False)

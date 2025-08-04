@@ -9,12 +9,14 @@ from ..database import get_db
 from ..models.proveedor import Proveedor as DBProveedor 
 from ..models.persona import Persona as DBPersona
 from ..models.empresa import Empresa as DBEmpresa
+from ..models.rol import Rol as DBRol
 from ..models.enums import EstadoEnum
 from ..schemas.proveedor import (
     ProveedorBase,
     ProveedorCreate,
     ProveedorUpdate, 
     Proveedor, 
+    ProveedorPagination, # Importar ProveedorPagination
 )
 
 router = APIRouter(
@@ -41,11 +43,23 @@ def create_proveedor(
 
         if proveedor_data.persona_data:
             is_persona = True
-            if proveedor_data.persona_data.ci:
-                db_persona_ci = db.query(DBPersona).filter(DBPersona.ci == proveedor_data.persona_data.ci).first()
+            persona_create_data = proveedor_data.persona_data.model_dump()
+            rol_ids = persona_create_data.pop('rol_ids', [])
+            persona_create_data.pop('usuario_data', None) # Eliminar usuario_data
+
+            if persona_create_data.get('ci'):
+                db_persona_ci = db.query(DBPersona).filter(DBPersona.ci == persona_create_data['ci']).first()
                 if db_persona_ci:
-                     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Ya existe una persona con este CI: {proveedor_data.persona_data.ci}")
-            new_persona = DBPersona(**proveedor_data.persona_data.model_dump(exclude_unset=True))
+                     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Ya existe una persona con este CI: {persona_create_data['ci']}")
+            
+            new_persona = DBPersona(**persona_create_data)
+
+            if rol_ids:
+                roles = db.query(DBRol).filter(DBRol.rol_id.in_(rol_ids)).all()
+                if len(roles) != len(rol_ids):
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Uno o más roles no fueron encontrados.")
+                new_persona.roles = roles
+
             db.add(new_persona)
             db.flush() # Obtener el ID de la nueva persona
 
@@ -138,7 +152,7 @@ def create_proveedor(
 
 # --- Endpoint para Listar Proveedores ---
 # Lo restringiremos a usuarios con ROLES_CAN_MANAGE_PROVEEDORES por defecto.
-@router.get("/", response_model=List[Proveedor]) # Retorna una lista del esquema Proveedor
+@router.get("/", response_model=ProveedorPagination) # Cambiado el response_model a ProveedorPagination
 def read_proveedores(
     estado: Optional[EstadoEnum] = Query(None, description="Filtrar por estado"),
     tipo: Optional[str] = Query(None, description="Filtrar por tipo ('persona' o 'empresa')"), # NUEVO FILTRO por tipo
@@ -199,11 +213,13 @@ def read_proveedores(
             )
         )
 
+    # Obtener el total de elementos antes de aplicar la paginación
+    total_items = query.count()
 
     # Aplicar paginación
     proveedores = query.offset(skip).limit(limit).all()
 
-    return proveedores # Retorna la lista de objetos DBProveedor que FastAPI serializa a List[Proveedor]
+    return {"items": proveedores, "total": total_items} # Retorna un diccionario con items y total
 
 # --- Endpoint para Obtener un Proveedor por ID ---
 # Lo restringiremos a usuarios con ROLES_CAN_MANAGE_PROVEEDORES por defecto.
@@ -338,7 +354,7 @@ def delete_proveedor(
          raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El proveedor ya está inactivo.")
 
     # Implementar Soft Delete: cambiar el estado
-    db_proveedor.estado = EstadoEnum.Inactivo
+    db_proveedor.estado = EstadoEnum.inactivo
 
     # Si tu modelo Proveedor tuviera campo modificado_por, lo asignarías aquí:
     # db_proveedor.modificado_por = current_user.usuario_id

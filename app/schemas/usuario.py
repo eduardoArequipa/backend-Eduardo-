@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List
 from datetime import datetime
 from ..models.enums import EstadoEnum
+from .pagination import Pagination # Importar la clase Pagination
 
 # Importamos esquemas de otros módulos. Usamos RolInDB para ser explícitos.
 from .persona import PersonaBase, PersonaWithRoles # Para anidar la información de la Persona
@@ -84,3 +85,7 @@ class UsuarioReadAudit(BaseModel):
 
     class Config:
         from_attributes = True
+
+class UsuarioPagination(Pagination[Usuario]):
+    """Esquema para la respuesta paginada de usuarios."""
+    pass

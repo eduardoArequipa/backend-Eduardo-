@@ -28,7 +28,8 @@ from ..schemas.compra import (
     CompraCreate, 
     CompraUpdate, 
     DetalleCompraCreate, 
-    DetalleCompra 
+    DetalleCompra,
+    CompraPagination # Importar el nuevo esquema de paginación
 )
 
 logger = logging.getLogger(__name__)
@@ -246,7 +247,7 @@ def create_compra(
 
 
 # --- Endpoint para Listar Compras ---
-@router.get("/", response_model=List[Compra])
+@router.get("/", response_model=CompraPagination)
 def read_compras(
     # Parámetros de filtro y paginación
     estado: Optional[EstadoCompraEnum] = Query(None, description="Filtrar por estado de la compra"),
@@ -314,10 +315,10 @@ def read_compras(
             )
         )
 
-    # Aplicar paginación
+    total = query.count() # Contar el total de compras antes de aplicar skip/limit
     compras = query.offset(skip).limit(limit).all()
 
-    return compras
+    return {"items": compras, "total": total} # Devolver el objeto de paginación
 # --- Endpoint para Obtener una Compra por ID ---
 @router.get("/{compra_id}", response_model=Compra) # Retorna el esquema Compra
 def read_compra(
@@ -470,9 +471,9 @@ def update_compra(
         raise e
     except Exception as e:
         db.rollback() # Revertir todos los cambios en caso de cualquier otro error
-        print(f"Error durante la actualización de Compra {compra_id}: {e}") 
-        logger.error(f"Error inesperado durante la actualización de Compra {compra_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Ocurrió un error al actualizar la Compra.")
+        print(f"Error durante la creación de Compra: {e}") 
+        logger.error(f"Error inesperado durante la creación de Compra: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Ocurrió un error al crear la Compra.")
 
 @router.patch("/{compra_id}/anular", response_model=Compra)
 def anular_compra(

@@ -2,6 +2,7 @@
 from typing import Optional, List 
 from pydantic import BaseModel, ConfigDict 
 from ..models.enums import EstadoEnum
+from .pagination import Pagination # Importar la clase Pagination
 
 class CategoriaBase(BaseModel):
     nombre_categoria: str 
@@ -28,3 +29,7 @@ class CategoriaNested(BaseModel):
     nombre_categoria: str
 
     model_config = ConfigDict(from_attributes=True)
+
+class CategoriaPagination(Pagination[Categoria]):
+    """Esquema para la respuesta paginada de categorías."""
+    pass

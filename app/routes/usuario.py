@@ -11,7 +11,7 @@ from ..models.usuario import Usuario as DBUsuario # Alias para el modelo de la B
 from ..models.persona import Persona as DBPersona # Importar Persona
 from ..models.rol import Rol as DBRol # Importar Rol
 from ..models.enums import EstadoEnum
-from ..schemas.usuario import UsuarioCreate, UsuarioUpdate, UsuarioReadAudit, Usuario as UsuarioSchema # Importamos los esquemas
+from ..schemas.usuario import UsuarioCreate, UsuarioUpdate, UsuarioReadAudit, Usuario as UsuarioSchema, UsuarioPagination # Importamos los esquemas
 
 router = APIRouter(
     prefix="/usuarios",
@@ -44,7 +44,7 @@ def get_usuario_or_404(
 
 # --- Rutas de API para Usuarios ---
 
-@router.get("/", response_model=List[UsuarioReadAudit])
+@router.get("/", response_model=UsuarioPagination)
 def read_usuarios(
     estado: Optional[EstadoEnum] = Query(None, description="Filtrar por estado del usuario"),
     search: Optional[str] = Query(None, description="Buscar por nombre de usuario, nombre de persona o apellido de persona."),
@@ -79,7 +79,10 @@ def read_usuarios(
         # CORRECCIÓN: Se une a la relación de roles de la PERSONA del usuario
         query = query.join(DBUsuario.persona).join(DBPersona.roles).filter(DBRol.rol_id == rol_id)
     
-    return query.order_by(DBUsuario.usuario_id.desc()).offset(skip).limit(limit).all()
+    total = query.count() # Contar el total de usuarios antes de aplicar skip/limit
+    usuarios = query.order_by(DBUsuario.usuario_id.desc()).offset(skip).limit(limit).all()
+
+    return {"items": usuarios, "total": total} # Devolver el objeto de paginación
 
 @router.get("/{usuario_id}", response_model=UsuarioReadAudit)
 def read_usuario(
@@ -141,7 +144,7 @@ def create_usuario(
         hashed_password = auth_utils.get_password_hash(usuario_create.contraseña)
         new_usuario = DBUsuario(
             **usuario_create.model_dump(exclude={'contraseña'}),
-            hashed_password=hashed_password, # CORRECCIÓN: Usar hashed_password
+            contraseña=hashed_password, # CORRECCIÓN: Usar hashed_password
             creado_por=current_user.usuario_id # Auditoría: quién lo creó
         )
         

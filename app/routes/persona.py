@@ -12,7 +12,7 @@ from ..models.usuario import Usuario as DBUsuario
 from ..models.rol import Rol as DBRol
 from ..models.enums import EstadoEnum, GeneroEnum
 # Importamos los esquemas actualizados
-from ..schemas.persona import PersonaWithRoles, PersonaCreate, PersonaUpdate, PersonaNested # <-- ¡CAMBIO AQUÍ! (Persona renombrada a PersonaWithRoles)
+from ..schemas.persona import PersonaWithRoles, PersonaCreate, PersonaUpdate, PersonaNested, PersonaPagination # <-- ¡CAMBIO AQUÍ! (PersonaPagination)
 from ..schemas.usuario import UsuarioCreate as UsuarioCreateSchemaForPersona # <-- ¡NUEVO! (Para la creación de usuario anidada)
 
 router = APIRouter(
@@ -104,41 +104,38 @@ def create_persona(
             
             # Crear el nuevo Usuario
             new_usuario = DBUsuario(
-                persona_id=new_persona.persona_id, # Vinculamos al ID de la persona recién creada
+                persona_id=new_persona.persona_id,
                 nombre_usuario=usuario_data.nombre_usuario,
                 contraseña=hashed_password,
                 estado=usuario_data.estado,
                 foto_ruta=usuario_data.foto_ruta,
-                creado_por=current_user.usuario_id # Registra quién creó este usuario
+                creado_por=current_user.usuario_id
             )
             db.add(new_usuario)
-            # No se asignan roles de usuario aquí directamente en la creación anidada
-            # ya que la asignación de roles de sistema (ej. "Admin", "Cajero") se hace por separado
-            # o se infiere de los roles de la persona.
 
-        db.commit() # Confirma todos los cambios en la transacción
-        db.refresh(new_persona) # Actualiza el objeto new_persona con los datos más recientes (incluyendo relaciones cargadas)
-        return new_persona # Retorna la persona creada (con sus roles)
+        db.commit()
+        db.refresh(new_persona)
+        return new_persona
 
     except HTTPException:
-        db.rollback() # Si es una HTTPException, hacemos rollback
-        raise # Y relanzamos la excepción
+        db.rollback()
+        raise
     except Exception as e:
-        db.rollback() # En cualquier otro error, hacemos rollback
+        db.rollback()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ocurrió un error inesperado al crear la Persona: {str(e)}")
 
 
-@router.get("/", response_model=List[PersonaWithRoles]) # <-- ¡CAMBIO AQUÍ! (response_model)
+@router.get("/", response_model=PersonaPagination) # <-- ¡CAMBIO AQUÍ! (response_model)
 def read_personas(
     estado: Optional[EstadoEnum] = Query(None, description="Filtrar por estado"),
     genero: Optional[GeneroEnum] = Query(None, description="Filtrar por género"),
     search: Optional[str] = Query(None, description="Buscar por nombre, CI, email, etc."),
-    rol_nombre: Optional[str] = Query(None, description="Filtrar por nombre de rol de persona (ej. 'Cliente', 'Proveedor')"), # <-- CLARIFICADO
+    rol_nombre: Optional[str] = Query(None, description="Filtrar por nombre de rol de persona (ej. 'Cliente', 'Proveedor')"),
     skip: int = Query(0, ge=0), limit: int = Query(100, gt=0),
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user) # Todos los usuarios autenticados pueden leer
 ):
-    query = db.query(DBPersona).options(joinedload(DBPersona.roles)) # Carga eager de roles de persona
+    query = db.query(DBPersona).options(joinedload(DBPersona.roles))
     
     if estado: query = query.filter(DBPersona.estado == estado)
     if genero: query = query.filter(DBPersona.genero == genero)
@@ -154,10 +151,12 @@ def read_personas(
         ))
     
     if rol_nombre:
-        # Asegúrate de que el JOIN sea al DBRol a través de la relación de Persona.roles
-        query = query.join(DBPersona.roles).filter(DBRol.nombre_rol.ilike(rol_nombre)) # <-- ¡MEJORA AQUÍ! (ilike para búsqueda insensible a mayúsculas/minúsculas)
+        query = query.join(DBPersona.roles).filter(DBRol.nombre_rol.ilike(rol_nombre))
     
-    return query.order_by(DBPersona.persona_id.desc()).offset(skip).limit(limit).all()
+    total = query.count() # Contar el total de personas antes de aplicar skip/limit
+    personas = query.order_by(DBPersona.persona_id.desc()).offset(skip).limit(limit).all()
+
+    return {"items": personas, "total": total} # Devolver el objeto de paginación
 
 @router.get("/without-user/", response_model=List[PersonaNested])
 def read_personas_without_user(
@@ -168,8 +167,6 @@ def read_personas_without_user(
     Obtiene una lista de personas que actualmente no tienen una cuenta de usuario asociada.
     Útil para asignar usuarios a personas existentes.
     """
-    # Usamos joinedload para cargar la relación usuario si queremos asegurarnos que no exista.
-    # El filter(not_(DBPersona.usuario.has())) ya es correcto para filtrar.
     return db.query(DBPersona).filter(not_(DBPersona.usuario.has())).all()
 
 
@@ -293,8 +290,8 @@ def get_rol_or_404(
 
 @router.post("/{persona_id}/roles/{rol_id}", response_model=PersonaWithRoles)
 def assign_role_to_persona(
-    persona: DBPersona = Depends(get_persona_or_404), # Obtiene la persona con sus roles
-    rol: DBRol = Depends(get_rol_or_404), # Obtiene el rol
+    persona: DBPersona = Depends(get_persona_or_404),
+    rol: DBRol = Depends(get_rol_or_404),
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PERSONS))
 ):
@@ -305,16 +302,16 @@ def assign_role_to_persona(
     if rol in persona.roles:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"La persona ya tiene el rol '{rol.nombre_rol}'.")
 
-    persona.roles.append(rol) # Asigna el rol
-    db.add(persona) # Añade la persona a la sesión para que se detecte el cambio
-    db.commit() # Guarda el cambio en la base de datos
-    db.refresh(persona) # Refresca el objeto para que tenga la relación de roles actualizada
+    persona.roles.append(rol)
+    db.add(persona)
+    db.commit()
+    db.refresh(persona)
     return persona
 
 @router.delete("/{persona_id}/roles/{rol_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_role_from_persona(
-    persona: DBPersona = Depends(get_persona_or_404), # Obtiene la persona con sus roles
-    rol: DBRol = Depends(get_rol_or_404), # Obtiene el rol
+    persona: DBPersona = Depends(get_persona_or_404),
+    rol: DBRol = Depends(get_rol_or_404),
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PERSONS))
 ):
@@ -324,8 +321,7 @@ def remove_role_from_persona(
     if rol not in persona.roles:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"La persona no tiene el rol '{rol.nombre_rol}'.")
 
-    persona.roles.remove(rol) # Elimina el rol
-    db.add(persona) # Añade la persona a la sesión para que se detecte el cambio
-    db.commit() # Guarda el cambio
-    # No se refresca ni se retorna nada, ya que el status es 204 No Content
+    persona.roles.remove(rol)
+    db.add(persona)
+    db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

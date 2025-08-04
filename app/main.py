@@ -50,7 +50,11 @@ app = FastAPI(
 # --- Middlewares ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: Cambiar a los orígenes permitidos en producción
+    allow_origins=[
+        "http://localhost:5173",  # Origen del frontend en desarrollo
+        "http://debian.local:8000", # Origen del backend si se accede directamente
+        "http://localhost:8000" # Origen del backend si se accede via localhost
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

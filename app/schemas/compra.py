@@ -8,6 +8,7 @@ from ..models.enums import EstadoCompraEnum
 from .proveedor import ProveedorNested
 from .usuario import UsuarioAudit 
 from .producto import ProductoNested, ProductoBase
+from .pagination import Pagination # Importar la clase Pagination
 
 class DetalleCompraBase(BaseModel):
     producto_id: int 
@@ -88,3 +89,6 @@ class CompraNested(CompraBase):
 
     model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: str})
 
+class CompraPagination(Pagination[Compra]):
+    """Esquema para la respuesta paginada de compras."""
+    pass

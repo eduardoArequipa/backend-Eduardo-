@@ -7,7 +7,7 @@ from ..models.enums import EstadoEnum
 
 from .persona import PersonaNested, PersonaCreate, PersonaUpdate 
 from .empresa import EmpresaNested, EmpresaCreate, EmpresaUpdate 
-
+from .pagination import Pagination # Importar la clase Pagination
 
 
 class ProveedorBase(BaseModel):
@@ -61,3 +61,6 @@ class ProveedorNested(BaseModel):
     empresa: Optional[EmpresaNested] = None 
     model_config = ConfigDict(from_attributes=True)
 
+class ProveedorPagination(Pagination[Proveedor]):
+    """Esquema para la respuesta paginada de proveedores."""
+    pass

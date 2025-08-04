@@ -6,6 +6,7 @@ from .usuario import UsuarioAudit
 from .unidad_medida import UnidadMedidaNested 
 from .marca import MarcaNested             
 from ..models.enums import EstadoEnum
+from .pagination import Pagination # Importar la clase Pagination
 
 class ProductoBase(BaseModel):
     codigo: str
@@ -76,3 +77,7 @@ class ProductoCompra(BaseModel):
     stock: int 
 
     model_config = ConfigDict(from_attributes=True)
+
+class ProductoPagination(Pagination[Producto]):
+    """Esquema para la respuesta paginada de productos."""
+    pass
