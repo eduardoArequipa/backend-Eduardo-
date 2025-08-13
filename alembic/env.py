@@ -14,11 +14,20 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# add your model's MetaData object here
-# for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
-target_metadata = None
+import os
+import sys
+from app.models.base import Base 
+# Agrega el directorio raíz de tu aplicación al sys.path
+# Esto es crucial para que Alembic encuentre tus modelos
+sys.path.insert(0, os.path.realpath(os.path.join(os.path.dirname(__file__), '..')))
+
+# Importa todos los modelos para que Base los conozca
+# Asegúrate de que todos tus modelos estén importados en app/models/__init__.py
+# o impórtalos explícitamente aquí.
+from app.models import categoria, compra, detalle_compra, detalle_venta, devoluciones, empresa, enums, marca, menu, metodo_pago, movimiento, persona_rol, persona, producto, proveedor, rol_menu, rol, unidad_medida, usuario, venta
+
+# Ahora Alembic puede encontrar los metadatos de tus modelos
+target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:

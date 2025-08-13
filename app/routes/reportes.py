@@ -20,6 +20,7 @@ from ..models.producto import Producto
 from ..models.persona import Persona
 from ..models.usuario import Usuario
 from ..models.categoria import Categoria
+from .. import auth as auth_utils 
 
 
 router = APIRouter(
@@ -114,7 +115,7 @@ def get_sales_report(
     empleado_ids: Optional[List[int]] = Query(None, description="Lista de IDs de empleados (usuarios) que crearon la venta"),
     formato: str = Query("json", description="Formato de salida: 'json' o 'pdf'"),
     db: Session = Depends(get_db),
-    current_user: auth.Usuario = Depends(auth.get_current_active_user_with_role(ROLES_CAN_ACCESS_REPORTS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/reportes")) # Verificar acceso al menú de categorías
 ):
     """
     Endpoint para obtener un reporte de ventas con múltiples filtros.

@@ -35,7 +35,7 @@ class Persona(Base):
             "Rol",
             secondary=PersonaRol.__tablename__,
             back_populates="personas",
-            overlaps="persona_roles,rol" # Soluciona advertencias relacionadas con Persona.roles
+            overlaps="persona_roles,rol,persona" # Soluciona advertencias relacionadas con Persona.roles
         )
     # Relación uno-a-muchos con los objetos de asociación PersonaRol directamente
     # Útil si necesitas acceder a los atributos adicionales que podría tener la tabla de unión en el futuro.

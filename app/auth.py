@@ -19,7 +19,7 @@ from .models.usuario import Usuario
 from .models.persona import Persona # Importamos Persona para joinedload
 from .models.enums import EstadoEnum # Importamos el Enum
 from .schemas.token import TokenData
-
+from .models.rol import Rol # Importamos Rol para joinedload
 # --- CONSTANTE DE EXPIRACIÓN DEL CÓDIGO DE RECUPERACIÓN ---
 RECOVERY_CODE_EXPIRE_MINUTES = int(os.getenv("RECOVERY_CODE_EXPIRE_MINUTES", 15))
 
@@ -137,9 +137,11 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         raise credentials_exception
 
     # *** CORRECCIÓN CRUCIAL AQUÍ: Cargar las relaciones anidadas correctamente ***
-    # Usa joinedload para cargar la persona y luego sus roles en la misma consulta
+    # Carga la persona, sus roles y los menús de cada rol.
     user = db.query(Usuario).options(
-        joinedload(Usuario.persona).joinedload(Persona.roles) # Cargar roles a través de persona
+        joinedload(Usuario.persona)
+        .joinedload(Persona.roles)
+        .joinedload(Rol.menus)
     ).filter(Usuario.nombre_usuario == token_data.username).first()
 
     if user is None:
@@ -176,36 +178,46 @@ def get_current_active_user(current_user: Usuario = Depends(get_current_user)):
 
     return current_user
 
-def get_current_active_user_with_role(required_roles: List[str]):
+def require_authenticated_user(current_user: Usuario = Depends(get_current_active_user)):
     """
-    Dependencia que verifica que el usuario autenticado esté activo y tenga AL MENOS uno
-    de los roles requeridos.
+    Dependencia simple que solo verifica que el usuario esté autenticado y activo.
+    No comprueba permisos de menú. Ideal para endpoints de datos generales.
     """
-    def _get_current_active_user_with_role_inner(
-        current_user: Usuario = Depends(get_current_active_user),
-        db: Session = Depends(get_db) # Mantener db si hay operaciones adicionales que lo requieran
+    return current_user
+
+def require_menu_access(menu_ruta: str):
+    """
+    Dependencia que verifica si el usuario autenticado tiene acceso a una ruta de menú específica.
+    """
+    def _require_menu_access_inner(
+        current_user: Usuario = Depends(get_current_active_user)
     ):
-
-        if not current_user.persona:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error interno: La información de la persona del usuario no se pudo cargar."
-            )
-
-        # Acceder a los roles a través de la relación 'persona'
-        user_roles_names = [rol.nombre_rol for rol in current_user.persona.roles]
-
-        if not any(role in user_roles_names for role in required_roles):
-            # Si el usuario no tiene ninguno de los roles requeridos
+        if not current_user.persona or not current_user.persona.roles:
+            print(f"[DEBUG AUTH] Usuario '{current_user.nombre_usuario}' no tiene persona o roles asignados.")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="No tienes permisos suficientes para acceder a este recurso."
             )
-        return current_user
-    return _get_current_active_user_with_role_inner # Renombrado para evitar conflicto de nombres
 
-# Lista de roles del sistema para facilitar la referencia
-ROLES = ["Administrador", "Empleado", "Proveedor", "Cliente"]
-ADMIN_ROLES = ["Administrador"] # Roles que tienen permisos de administrador (ej: gestionar usuarios, roles)
-EMPLOYEE_ROLES = ["Administrador", "Empleado"] # Roles que tienen permisos de empleado
-# Puedes definir otras listas según necesites
+        # Obtener todas las rutas de menú a las que el usuario tiene acceso a través de sus roles
+        user_menu_rutas = {
+            menu.ruta 
+            for rol in current_user.persona.roles 
+            for menu in rol.menus
+        }
+        
+        print(f"[DEBUG AUTH] Usuario '{current_user.nombre_usuario}' intentando acceder a '{menu_ruta}'.")
+        print(f"[DEBUG AUTH] Rutas permitidas para el usuario: {user_menu_rutas}")
+
+        # Comprobar si la ruta requerida está en el conjunto de rutas permitidas
+        if menu_ruta not in user_menu_rutas:
+            print(f"[DEBUG AUTH] ACCESO DENEGADO a '{menu_ruta}'.")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tienes permisos suficientes para acceder a este recurso."
+            )
+        
+        
+        return current_user
+
+    return _require_menu_access_inner

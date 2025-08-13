@@ -10,6 +10,7 @@ from app.schemas.dashboard import (
     InventoryByCategory, PurchaseStats, TopSupplier, TopPurchasedProduct,
     LowStockProduct
 )
+from .. import auth as auth_utils
 
 router = APIRouter(
     prefix="/dashboard",
@@ -18,6 +19,7 @@ router = APIRouter(
 
 @router.get("/", response_model=DashboardData)
 def get_dashboard_data(db: Session = Depends(get_db)):
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/compras")) # Verificar acceso al menú de categorías
 
     # --- 1. KPIs ---
     start_of_month = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)

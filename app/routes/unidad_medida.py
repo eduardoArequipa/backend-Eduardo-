@@ -33,7 +33,7 @@ def get_unidad_medida_or_404(
 def create_unidad_medida(
     unidad_medida: UnidadMedidaCreate,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_UNIDADES_MEDIDA))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/unidades-medida")) # Verificar acceso al menú de categorías
 ):
     db_unidad_existente = db.query(DBUnidadMedida).filter(
         or_(DBUnidadMedida.nombre_unidad == unidad_medida.nombre_unidad, DBUnidadMedida.abreviatura == unidad_medida.abreviatura)
@@ -53,7 +53,7 @@ def read_unidades_medida(
     search: Optional[str] = Query(None, description="Texto de búsqueda por nombre o abreviatura"),
     skip: int = Query(0, ge=0), limit: int = Query(100, gt=0),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_UNIDADES_MEDIDA))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_authenticated_user)
 ):
     query = db.query(DBUnidadMedida)
     if estado: query = query.filter(DBUnidadMedida.estado == estado)
@@ -67,7 +67,7 @@ def read_unidades_medida(
 @router.get("/{unidad_id}", response_model=UnidadMedida)
 def read_unidad_medida(
     unidad_medida: DBUnidadMedida = Depends(get_unidad_medida_or_404),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_UNIDADES_MEDIDA))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/unidades-medida")) # Verificar acceso al menú de categorías
 ):
     return unidad_medida
 
@@ -76,7 +76,7 @@ def update_unidad_medida(
     unidad_medida_update: UnidadMedidaCreate,
     db_unidad_medida: DBUnidadMedida = Depends(get_unidad_medida_or_404),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_UNIDADES_MEDIDA))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/unidades-medida")) # Verificar acceso al menú de categorías
 ):
     update_data = unidad_medida_update.model_dump(exclude_unset=True)
     
@@ -106,7 +106,7 @@ def update_unidad_medida(
 def delete_unidad_medida(
     db_unidad_medida: DBUnidadMedida = Depends(get_unidad_medida_or_404),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_UNIDADES_MEDIDA))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/unidades-medida")) # Verificar acceso al menú de categorías
 ):
     if db_unidad_medida.estado == EstadoEnum.inactivo:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La unidad de medida ya está inactiva.")
@@ -119,7 +119,7 @@ def delete_unidad_medida(
 def activate_unidad_medida(
     db_unidad_medida: DBUnidadMedida = Depends(get_unidad_medida_or_404),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_UNIDADES_MEDIDA))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/unidades-medida")) # Verificar acceso al menú de categorías
 ):
     if db_unidad_medida.estado == EstadoEnum.activo:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La unidad de medida ya está activa.")

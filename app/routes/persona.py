@@ -33,7 +33,7 @@ def get_persona_or_404(
     Lanza un error 404 si no se encuentra.
     """
     # Cargamos eager loading para la relación de roles de persona
-    persona = db.query(DBPersona).options(joinedload(DBPersona.roles)).filter(DBPersona.persona_id == persona_id).first()
+    persona = db.query(DBPersona).options(joinedload(DBPersona.roles), joinedload(DBPersona.usuario)).filter(DBPersona.persona_id == persona_id).first()
     if persona is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona no encontrada.")
     return persona
@@ -45,7 +45,7 @@ def create_persona(
     persona: PersonaCreate,
     db: Session = Depends(get_db),
     # Solo usuarios con los roles especificados pueden crear personas
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PERSONS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/personas")) # Verificar acceso al menú de categorías
 ):
     db.begin_nested() # Inicia una transacción anidada para rollback en caso de error
     try:
@@ -125,43 +125,54 @@ def create_persona(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ocurrió un error inesperado al crear la Persona: {str(e)}")
 
 
-@router.get("/", response_model=PersonaPagination) # <-- ¡CAMBIO AQUÍ! (response_model)
+@router.get("/", response_model=PersonaPagination)
 def read_personas(
     estado: Optional[EstadoEnum] = Query(None, description="Filtrar por estado"),
     genero: Optional[GeneroEnum] = Query(None, description="Filtrar por género"),
     search: Optional[str] = Query(None, description="Buscar por nombre, CI, email, etc."),
-    rol_nombre: Optional[str] = Query(None, description="Filtrar por nombre de rol de persona (ej. 'Cliente', 'Proveedor')"),
+    rol_nombre: Optional[str] = Query(None, description="Filtrar por nombre de rol de persona (ej. 'Cliente')"),
+    exclude_rol_nombre: Optional[str] = Query(None, description="Excluir personas que tengan un rol específico"),
+    persona_id: Optional[int] = Query(None, description="Obtener una persona por su ID específico"),
     skip: int = Query(0, ge=0), limit: int = Query(100, gt=0),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user) # Todos los usuarios autenticados pueden leer
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/personas"))
 ):
-    query = db.query(DBPersona).options(joinedload(DBPersona.roles))
+    query = db.query(DBPersona).options(joinedload(DBPersona.roles), joinedload(DBPersona.usuario))
+
+    if persona_id is not None:
+        query = query.filter(DBPersona.persona_id == persona_id)
+    else:
+        if rol_nombre:
+            query = query.join(DBPersona.roles).filter(DBRol.nombre_rol.ilike(f"%{rol_nombre}%"))
+
+        if exclude_rol_nombre:
+            subquery = db.query(DBPersona.persona_id).join(DBPersona.roles).filter(DBRol.nombre_rol.ilike(f"%{exclude_rol_nombre}%"))
+            query = query.filter(DBPersona.persona_id.not_in(subquery))
+
+        if estado:
+            query = query.filter(DBPersona.estado == estado)
+        if genero:
+            query = query.filter(DBPersona.genero == genero)
+        
+        if search:
+            search_pattern = f"%{search}%"
+            query = query.filter(or_(
+                DBPersona.nombre.ilike(search_pattern),
+                DBPersona.apellido_paterno.ilike(search_pattern),
+                DBPersona.apellido_materno.ilike(search_pattern),
+                DBPersona.ci.ilike(search_pattern),
+                DBPersona.email.ilike(search_pattern)
+            ))
     
-    if estado: query = query.filter(DBPersona.estado == estado)
-    if genero: query = query.filter(DBPersona.genero == genero)
-    
-    if search:
-        search_pattern = f"%{search}%"
-        query = query.filter(or_(
-            DBPersona.nombre.ilike(search_pattern),
-            DBPersona.apellido_paterno.ilike(search_pattern),
-            DBPersona.apellido_materno.ilike(search_pattern),
-            DBPersona.ci.ilike(search_pattern),
-            DBPersona.email.ilike(search_pattern)
-        ))
-    
-    if rol_nombre:
-        query = query.join(DBPersona.roles).filter(DBRol.nombre_rol.ilike(rol_nombre))
-    
-    total = query.count() # Contar el total de personas antes de aplicar skip/limit
+    total = query.count()
     personas = query.order_by(DBPersona.persona_id.desc()).offset(skip).limit(limit).all()
 
-    return {"items": personas, "total": total} # Devolver el objeto de paginación
+    return {"items": personas, "total": total}
 
 @router.get("/without-user/", response_model=List[PersonaNested])
 def read_personas_without_user(
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(["Administrador"]))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/personas")) # Verificar acceso al menú de categorías
 ):
     """
     Obtiene una lista de personas que actualmente no tienen una cuenta de usuario asociada.
@@ -173,7 +184,7 @@ def read_personas_without_user(
 @router.get("/{persona_id}", response_model=PersonaWithRoles) # <-- ¡CAMBIO AQUÍ! (response_model)
 def read_persona(
     persona: DBPersona = Depends(get_persona_or_404), # La dependencia ya carga los roles
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user)
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/personas")) # Verificar acceso al menú de categorías
 ):
     """
     Obtiene los detalles de una persona específica por su ID, incluyendo sus roles.
@@ -185,7 +196,7 @@ def update_persona(
     persona_update: PersonaUpdate,
     db_persona: DBPersona = Depends(get_persona_or_404), # La dependencia ya carga los roles
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PERSONS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/personas")) # Verificar acceso al menú de categorías
 ):
     db.begin_nested()
     try:
@@ -231,7 +242,7 @@ def update_persona(
 def activate_persona(
     db_persona: DBPersona = Depends(get_persona_or_404),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PERSONS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/personas")) # Verificar acceso al menú de categorías
 ):
     """
     Activa el estado de una persona.
@@ -247,7 +258,7 @@ def activate_persona(
 def deactivate_persona(
     db_persona: DBPersona = Depends(get_persona_or_404),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PERSONS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/personas")) # Verificar acceso al menú de categorías
 ):
     """
     Desactiva el estado de una persona y su usuario asociado (si existe).
@@ -293,7 +304,7 @@ def assign_role_to_persona(
     persona: DBPersona = Depends(get_persona_or_404),
     rol: DBRol = Depends(get_rol_or_404),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PERSONS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/personas")) # Verificar acceso al menú de categorías
 ):
     """
     Asigna un rol específico a una persona.
@@ -313,7 +324,7 @@ def remove_role_from_persona(
     persona: DBPersona = Depends(get_persona_or_404),
     rol: DBRol = Depends(get_rol_or_404),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PERSONS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/personas")) # Verificar acceso al menú de categorías
 ):
     """
     Elimina un rol específico de una persona.

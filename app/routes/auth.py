@@ -1,7 +1,7 @@
 # backEnd/app/routes/auth.py
 
 from datetime import timedelta, datetime, timezone
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -12,8 +12,11 @@ from .. import auth as auth_utils # Asumimos que auth_utils es app/auth.py
 from ..database import get_db
 from ..schemas.token import Token
 from ..schemas.usuario import UsuarioReadAudit # Usamos este esquema para /me
+from ..schemas.menu import MenuInDB
 from ..models.persona import Persona as DBPersona # Ya está importado, es correcto
 from ..models.usuario import Usuario # Asegúrate de importar el modelo Usuario explícitamente si auth_utils.Usuario es solo un alias
+from ..models.menu import Menu as DBMenu
+from ..models.rol import Rol as DBRol # Importar Rol
 from ..models.enums import EstadoEnum # Asegúrate de que EstadoEnum esté importado correctamente
 
 router = APIRouter(
@@ -56,7 +59,7 @@ def login_for_access_token(
     # Cargar el usuario, incluyendo su persona asociada y sus roles a través de la persona
     # Aquí está la corrección clave:
     user = db.query(Usuario).options( # Usar directamente el modelo Usuario si está importado
-        joinedload(Usuario.persona).joinedload(DBPersona.roles) # <-- ¡CORREGIDO AQUÍ!
+        joinedload(Usuario.persona).joinedload(DBPersona.roles).joinedload(DBRol.menus) # <-- ¡CORREGIDO AQUÍ!
     ).filter(Usuario.nombre_usuario == form_data.username).first()
 
     if not user:
@@ -163,6 +166,29 @@ def login_for_access_token(
     )
     print("DEBUG: Token de acceso generado exitosamente.")
     return {"access_token": access_token, "token_type": "bearer"}
+
+# Endpoint para obtener los menús del usuario actual
+@router.get("/me/menus", response_model=List[MenuInDB])
+def read_user_menus(
+    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user)
+):
+    """
+    Obtiene la lista de menús a los que el usuario autenticado tiene acceso
+    basado en sus roles.
+    """
+    if not current_user.persona or not current_user.persona.roles:
+        return []
+
+    # Usar un set para evitar menús duplicados si un usuario tiene múltiples roles
+    # que dan acceso al mismo menú.
+    user_menus = {menu for rol in current_user.persona.roles for menu in rol.menus}
+    
+    # Ordenar los menús por ID para una presentación consistente
+    sorted_menus = sorted(list(user_menus), key=lambda menu: menu.menu_id)
+    
+    print(f"[DEBUG BACKEND] Usuario '{current_user.nombre_usuario}' tiene acceso a {len(sorted_menus)} menús: {[menu.nombre for menu in sorted_menus]}")
+    
+    return sorted_menus
 
 # Endpoint para solicitar un código de recuperación de contraseña
 @router.post("/forgot-password-request", status_code=status.HTTP_200_OK)
@@ -308,7 +334,7 @@ def reset_password(
         print(f"DEBUG: Contraseña de '{user.nombre_usuario}' restablecida exitosamente y cuenta activada.")
     except Exception as e:
         db.rollback()
-        print(f"ERROR: Fallo al restablecer la contraseña o actualizar el usuario: {e}")
+        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error interno del servidor al restablecer la contraseña."

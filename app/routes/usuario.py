@@ -18,10 +18,6 @@ router = APIRouter(
     tags=["usuarios"]
 )
 
-# Roles de USUARIO que tienen permiso para gestionar otros usuarios (CRUD básico de usuarios)
-ROLES_CAN_MANAGE_USERS = ["Administrador"]
-# Roles de USUARIO que tienen permiso para asignar/quitar roles a otros usuarios
-ROLES_CAN_MANAGE_USER_ROLES = ["Administrador"]
 
 # --- Dependencias Reutilizables ---
 def get_usuario_or_404(
@@ -52,7 +48,7 @@ def read_usuarios(
     rol_id: Optional[int] = Query(None, description="Filtrar por ID de Rol de la Persona asociada al Usuario"),
     skip: int = Query(0, ge=0), limit: int = Query(100, gt=0),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_USERS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/usuarios")) # Verificar acceso al menú de categorías
 ):
     """
     Obtiene una lista de usuarios, con opciones de filtrado y búsqueda.
@@ -87,7 +83,7 @@ def read_usuarios(
 @router.get("/{usuario_id}", response_model=UsuarioReadAudit)
 def read_usuario(
     usuario: DBUsuario = Depends(get_usuario_or_404),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user)
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/usuarios")) # Verificar acceso al menú de categorías
 ):
     """
     Obtiene los detalles de un usuario específico.
@@ -107,7 +103,7 @@ def read_usuario(
 def create_usuario(
     usuario_create: UsuarioCreate,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_USERS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/usuarios")) # Verificar acceso al menú de categorías
 ):
     """
     Crea un nuevo usuario vinculado a una persona existente.
@@ -165,7 +161,7 @@ def update_usuario(
     usuario_update: UsuarioUpdate,
     db_usuario: DBUsuario = Depends(get_usuario_or_404),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user)
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/usuarios")) # Verificar acceso al menú de categorías
 ):
     """
     Actualiza los datos de un usuario.
@@ -206,7 +202,7 @@ def update_usuario(
 def delete_usuario(
     db_usuario: DBUsuario = Depends(get_usuario_or_404),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_USERS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/usuarios")) # Verificar acceso al menú de categorías
 ):
     """
     Desactiva (borrado lógico) un usuario por su ID.
@@ -225,7 +221,7 @@ def delete_usuario(
 def activate_usuario(
     db_usuario: DBUsuario = Depends(get_usuario_or_404),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_USERS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/usuarios")) # Verificar acceso al menú de categorías
 ):
     """
     Activa el estado de un usuario.
@@ -247,7 +243,7 @@ def assign_role_to_user(
     rol_id: int = Path(..., title="ID del Rol a asignar a la Persona del usuario"),
     db_usuario: DBUsuario = Depends(get_usuario_or_404),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_USER_ROLES))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/usuarios")) # Verificar acceso al menú de categorías
 ):
     """
     Asigna un rol específico a la PERSONA asociada a un usuario.
@@ -273,7 +269,7 @@ def remove_role_from_user(
     rol_id: int = Path(..., title="ID del Rol a remover de la Persona del usuario"),
     db_usuario: DBUsuario = Depends(get_usuario_or_404),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_USER_ROLES))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/usuarios")) # Verificar acceso al menú de categorías
 ):
     """
     Remueve un rol específico de la PERSONA asociada a un usuario.

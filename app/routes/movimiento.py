@@ -15,14 +15,12 @@ router = APIRouter(
     tags=["Movimientos de Inventario"]
 )
 
-# Roles que pueden gestionar movimientos de inventario
-ROLES_CAN_MANAGE_MOVEMENTS = ["Administrador", "Empleado"]
 
 @router.post("/", response_model=MovimientoResponse, status_code=status.HTTP_201_CREATED)
 def create_movimiento(
     movimiento: MovimientoCreate,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_MOVEMENTS)) # Dependencia corregida
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/movimientos")) # Verificar acceso al menú de categorías
 ):
     db_product = db.query(DBProducto).filter(DBProducto.producto_id == movimiento.producto_id).first()
     if not db_product:
@@ -63,7 +61,7 @@ def read_movimientos(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_MOVEMENTS)) # Dependencia corregida
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/movimientos")) # Verificar acceso al menú de categorías
 ):
     movimientos = db.query(DBMovimientoInventario).options(joinedload(DBMovimientoInventario.producto), joinedload(DBMovimientoInventario.usuario)).offset(skip).limit(limit).all()
     return movimientos

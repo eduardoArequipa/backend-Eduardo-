@@ -30,7 +30,7 @@ ROLES_CAN_MANAGE_PROVEEDORES = ["Administrador", "Empleado"]
 def create_proveedor(
     proveedor_data: ProveedorCreate, 
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PROVEEDORES))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/proveedores")) # Verificar acceso al menú de categorías
 ):
     """
     Crea un nuevo Proveedor, opcionalmente creando una nueva Persona o Empresa asociada.
@@ -160,7 +160,7 @@ def read_proveedores(
     skip: int = Query(0, ge=0, description="Número de elementos a omitir (paginación)"),
     limit: int = Query(100, gt=0, description="Número máximo de elementos a retornar (paginación)"),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PROVEEDORES))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/proveedores")) # Verificar acceso al menú de categorías
 ):
     """
     Obtiene una lista de Proveedores con opciones de filtro, búsqueda y paginación.
@@ -227,7 +227,7 @@ def read_proveedores(
 def read_proveedor(
     proveedor_id: int,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PROVEEDORES))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/proveedores")) # Verificar acceso al menú de categorías
 ):
     """
     Obtiene la información de un Proveedor específico por su ID.
@@ -252,7 +252,7 @@ def update_proveedor(
     proveedor_id: int,
     proveedor_update: ProveedorUpdate, # Usa el esquema modificado con datos de actualización anidados
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PROVEEDORES))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/proveedores")) # Verificar acceso al menú de categorías
 ):
     """
     Actualiza la información de un Proveedor existente por su ID, incluyendo datos de la Persona o Empresa asociada.
@@ -340,7 +340,7 @@ def update_proveedor(
 def delete_proveedor(
     proveedor_id: int,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PROVEEDORES))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/proveedores")) # Verificar acceso al menú de categorías
 ):
     """
     Desactiva (cambia el estado a inactivo) un Proveedor por su ID.
@@ -369,7 +369,7 @@ def delete_proveedor(
 def activate_proveedor(
     proveedor_id: int,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PROVEEDORES))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/proveedores")) # Verificar acceso al menú de categorías
 ):
     """
     Activa (cambia el estado a activo) un Proveedor por su ID.

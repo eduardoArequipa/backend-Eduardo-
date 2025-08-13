@@ -19,7 +19,7 @@ class Rol(Base):
         "Persona",
         secondary=PersonaRol.__tablename__,
         back_populates="roles",
-        overlaps="persona_roles,persona"
+        overlaps="persona_roles,persona,rol"
     )
     persona_roles = relationship(
         "PersonaRol",
@@ -27,5 +27,21 @@ class Rol(Base):
         overlaps="personas", # Soluciona advertencias relacionadas con Rol.persona_roles
         cascade="all, delete-orphan" # Añadido cascade para la limpieza de la tabla de unión
     )
+
+    # Nueva relación con Menus (muchos a muchos)
+    rol_menus = relationship(
+        "RolMenu",
+        back_populates="rol",
+        cascade="all, delete-orphan"
+    )
+    
+    # Acceso directo a los menús a través de la tabla de asociación
+    menus = relationship(
+        "Menu",
+        secondary="rol_menus",
+        back_populates="roles",
+        overlaps="rol_menus"
+    )
+
     def __repr__(self):
         return f"<Rol(id={self.rol_id}, nombre_rol='{self.nombre_rol}')>"

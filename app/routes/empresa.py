@@ -18,14 +18,13 @@ router = APIRouter(
     tags=["empresas"] 
 )
 
-ROLES_CAN_MANAGE_EMPRESAS = ["Administrador", "Empleado"]
 
 
 @router.post("/", response_model=Empresa, status_code=status.HTTP_201_CREATED)
 def create_empresa(
     empresa: EmpresaCreate, # Espera tu esquema EmpresaCreate
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_EMPRESAS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_authenticated_user) # Verificar acceso al menú de categorías
 ):
     """
     Crea una nueva Empresa.
@@ -52,7 +51,7 @@ def read_empresas(
     limit: int = Query(100, gt=0, description="Número máximo de elementos a retornar (paginación)"),
     without_proveedor: Optional[bool] = Query(None, description="Filtrar empresas que no tienen un proveedor asociado"),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_EMPRESAS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_authenticated_user) # Verificar acceso al menú de categorías
 ):
     """
     Obtiene una lista de Empresas con opciones de filtro, búsqueda y paginación.
@@ -87,7 +86,7 @@ def read_empresas(
 def read_empresa(
     empresa_id: int,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_EMPRESAS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_authenticated_user) # Verificar acceso al menú de categorías
 ):
     """
     Obtiene la información de una Empresa específica por su ID.
@@ -105,7 +104,7 @@ def update_empresa(
     empresa_id: int,
     empresa_update: EmpresaUpdate, # Espera tu esquema EmpresaUpdate (campos opcionales)
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_EMPRESAS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_authenticated_user) # Verificar acceso al menú de categorías
 ):
     """
     Actualiza la información de una Empresa existente por su ID.
@@ -138,7 +137,7 @@ def update_empresa(
 def delete_empresa(
     empresa_id: int,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_EMPRESAS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_authenticated_user) # Verificar acceso al menú de categorías
 ):
     """
     Desactiva (cambia el estado a inactivo) una Empresa por su ID.
@@ -162,7 +161,7 @@ def delete_empresa(
 def activate_empresa(
     empresa_id: int,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_EMPRESAS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_authenticated_user) # Verificar acceso al menú de categorías
 ):
     """
     Activa (cambia el estado a activo) una Empresa por su ID.

@@ -23,13 +23,11 @@ router = APIRouter(
     tags=["marcas"]
 )
 
-ROLES_CAN_MANAGE_MARCAS = ["Administrador", "Empleado"]
 
 @router.post("/", response_model=Marca, status_code=status.HTTP_201_CREATED)
 def create_marca(
     marca: MarcaCreate,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_MARCAS))
 ):
     """
     Crea una nueva marca en la base de datos.
@@ -42,7 +40,6 @@ def create_marca(
 
     # Crear la nueva marca con los datos del esquema
     new_marca = DBMarca(**marca.model_dump())
-    new_marca.creado_por = current_user.usuario_id
 
     db.add(new_marca)
     db.commit()
@@ -57,7 +54,7 @@ def read_marcas(
     skip: int = Query(0, ge=0, description="Número de elementos a omitir (paginación)"),
     limit: int = Query(100, gt=0, description="Número máximo de elementos a retornar (paginación)"),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_MARCAS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_authenticated_user)
 ):
     """
     Obtiene una lista de Marcas con opciones de filtro, búsqueda y paginación.
@@ -79,7 +76,6 @@ def read_marcas(
 def read_marca(
     marca_id: int,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_MARCAS))
 ):
     """
     Obtiene una marca específica por su ID.
@@ -97,7 +93,7 @@ def update_marca(
     marca_id: int,
     marca_update: MarcaCreate, 
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_MARCAS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/marcas")) # Verificar acceso al menú de categorías
 ):
     """
     Actualiza una marca existente por su ID.
@@ -128,7 +124,7 @@ def update_marca(
 def delete_marca(
     marca_id: int,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_MARCAS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/marcas")) # Verificar acceso al menú de categorías
 ):
     """
     Desactiva una marca por su ID (cambia su estado a 'inactivo').
@@ -152,7 +148,6 @@ def delete_marca(
 def activate_marca(
     marca_id: int,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_MARCAS))
 ):
     """
     Activa una marca por su ID (cambia su estado a 'activo').

@@ -39,7 +39,7 @@ def get_categoria_or_404(
 def create_categoria(
     categoria: CategoriaCreate,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_CATEGORIES))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/categorias")) # Verificar acceso al menú de categorías
 ):
     """
     Crea una nueva Categoría.
@@ -65,11 +65,11 @@ def read_categorias(
     skip: int = Query(0, ge=0, description="Número de elementos a omitir (paginación)"),
     limit: int = Query(100, gt=0, description="Número máximo de elementos a retornar (paginación)"),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_CATEGORIES))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_authenticated_user)
 ):
     """
     Obtiene una lista de Categorías con opciones de filtro, búsqueda y paginación.
-    Accesible solo por usuarios con permisos de gestión de categorías.
+    Accesible por cualquier usuario autenticado (para uso en filtros).
     """
     query = db.query(DBCategoria)
 
@@ -87,7 +87,7 @@ def read_categorias(
 @router.get("/{categoria_id}", response_model=Categoria)
 def read_categoria(
     categoria: DBCategoria = Depends(get_categoria_or_404),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_CATEGORIES))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/categorias")) # Verificar acceso al menú de categorías
 ):
     """
     Obtiene la información de una Categoría específica por su ID.
@@ -100,7 +100,7 @@ def update_categoria(
     categoria_update: CategoriaUpdate,
     db_categoria: DBCategoria = Depends(get_categoria_or_404),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_CATEGORIES))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/categorias")) # Verificar acceso al menú de categorías
 ):
     """
     Actualiza la información de una Categoría existente por su ID.
@@ -123,7 +123,7 @@ def update_categoria(
 def delete_categoria(
     db_categoria: DBCategoria = Depends(get_categoria_or_404),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_CATEGORIES))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/categorias")) # Verificar acceso al menú de categorías
 ):
     """
     Desactiva (cambia el estado a inactivo) una Categoría por su ID.
@@ -142,7 +142,7 @@ def delete_categoria(
 def activate_categoria(
     db_categoria: DBCategoria = Depends(get_categoria_or_404),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_CATEGORIES))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/categorias")) # Verificar acceso al menú de categorías
 ):
     """
     Activa (cambia el estado a activo) una Categoría por su ID.

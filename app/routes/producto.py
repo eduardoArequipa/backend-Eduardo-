@@ -33,13 +33,10 @@ def delete_image_file(image_path: Optional[str]):
             if file_to_delete_relative.startswith(UPLOAD_DIR_PRODUCTS):
                 if os.path.exists(file_to_delete_relative):
                     os.remove(file_to_delete_relative)
-                    print(f"Imagen eliminada: {file_to_delete_relative}")
-                else:
-                    print(f"Intento de eliminar imagen pero archivo no encontrado: {file_to_delete_relative}")
-            else:
-                print(f"Intento de eliminar imagen con ruta fuera del directorio de productos: {image_path}")
         except Exception as e:
-            print(f"Error deleting image file {image_path}: {e}")
+            # Opcional: puedes registrar el error si lo deseas
+            pass
+                    
 
 router = APIRouter(
     prefix="/productos",
@@ -52,7 +49,7 @@ ROLES_CAN_MANAGE_PRODUCTS = ["Administrador", "Empleado"]
 def create_producto(
     producto: ProductoCreate,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PRODUCTS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos")) # Verificar acceso al menú de categorías
 ):
     db_categoria = db.query(DBCategoria).filter(DBCategoria.categoria_id == producto.categoria_id).first()
     if db_categoria is None:
@@ -83,31 +80,22 @@ def create_producto(
 
     db.add(new_producto)
     db.commit()
-    db.refresh(new_producto)
+    db.refresh(new_producto, attribute_names=['categoria', 'creador', 'modificador', 'unidad_medida', 'marca'])
 
-    # Cargar las relaciones para la respuesta
-    db_producto_for_response = db.query(DBProducto).options(
-        joinedload(DBProducto.categoria),
-        joinedload(DBProducto.creador),
-        joinedload(DBProducto.modificador),
-        joinedload(DBProducto.unidad_medida),
-        joinedload(DBProducto.marca)
-    ).filter(DBProducto.producto_id == new_producto.producto_id).first()
-
-    return db_producto_for_response
+    return new_producto
 
 @router.get("/", response_model=ProductoPagination) # Cambiado a ProductoPagination
 def read_productos(
     estado: Optional[EstadoEnum] = Query(None, description="Filtrar por estado"),
     search: Optional[str] = Query(None, description="Texto de búsqueda por código o nombre"),
-    categoria_id: Optional[int] = Query(None, description="Filtrar por Categoría (ID)"),
-    unidad_medida_id: Optional[int] = Query(None, description="Filtrar por Unidad de Medida (ID)"),
-    marca_id: Optional[int] = Query(None, description="Filtrar por Marca (ID)"),
+    categoria_id: Optional[int] = Query(None, description="Filtrar por Categoría (ID)", alias="categoria"),
+    unidad_medida_id: Optional[int] = Query(None, description="Filtrar por Unidad de Medida (ID)", alias="unidad_medida"),
+    marca_id: Optional[int] = Query(None, description="Filtrar por Marca (ID)", alias="marca"),
     min_stock: Optional[Decimal] = Query(None, description="Filtrar por productos con stock mínimo"),
     skip: int = Query(0, ge=0, description="Número de elementos a omitir (paginación)"),
     limit: int = Query(100, gt=0, description="Número máximo de elementos a retornar (paginación)"),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PRODUCTS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos")) # Verificar acceso al menú de categorías
 ):
     query = db.query(DBProducto).options(
         joinedload(DBProducto.categoria),
@@ -171,7 +159,7 @@ def get_low_stock_products(
 def read_producto(
     producto_id: int,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PRODUCTS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos")) # Verificar acceso al menú de categorías
 ):
     producto = db.query(DBProducto).options(
         joinedload(DBProducto.categoria),
@@ -191,7 +179,7 @@ def update_producto(
     producto_id: int,
     producto_update: ProductoUpdate,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PRODUCTS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos")) # Verificar acceso al menú de categorías
 ):
     db_producto = db.query(DBProducto).options(
         joinedload(DBProducto.categoria),
@@ -245,23 +233,15 @@ def update_producto(
     db_producto.modificado_por = current_user.usuario_id
 
     db.commit()
-    db.refresh(db_producto)
+    db.refresh(db_producto, attribute_names=['categoria', 'creador', 'modificador', 'unidad_medida', 'marca'])
 
-    db_producto_for_response = db.query(DBProducto).options(
-        joinedload(DBProducto.categoria),
-        joinedload(DBProducto.creador),
-        joinedload(DBProducto.modificador),
-        joinedload(DBProducto.unidad_medida),
-        joinedload(DBProducto.marca)
-    ).filter(DBProducto.producto_id == db_producto.producto_id).first()
-
-    return db_producto_for_response
+    return db_producto
 
 @router.patch("/{producto_id}/inactivar", status_code=status.HTTP_204_NO_CONTENT)
 def delete_producto(
     producto_id: int,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PRODUCTS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos")) # Verificar acceso al menú de categorías
 ):
     db_producto = db.query(DBProducto).filter(DBProducto.producto_id == producto_id).first()
     if db_producto is None:
@@ -285,7 +265,7 @@ def delete_producto(
 def activate_producto(
     producto_id: int,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PRODUCTS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos")) # Verificar acceso al menú de categorías
 ):
     db_producto = db.query(DBProducto).options(
         joinedload(DBProducto.categoria),

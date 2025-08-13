@@ -1,5 +1,3 @@
-# backEnd/app/routes/venta.py
-
 from typing import List, Optional
 from datetime import datetime
 from decimal import Decimal
@@ -30,8 +28,6 @@ router_productos_public = APIRouter(
     prefix="/productos",
     tags=["productos (app-friendly)"]
 )
-
-ROLES_CAN_MANAGE_VENTAS = ["Administrador", "Empleado"]
 
 def get_venta_or_404(
     venta_id: int = Path(..., title="El ID de la venta"),
@@ -71,7 +67,7 @@ def get_producto_by_codigo(
 def create_venta(
     venta_data: VentaCreate,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_VENTAS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/ventas"))
 ):
     """
     Crea una nueva venta, valida stock y actualiza existencias de productos.
@@ -150,7 +146,7 @@ def read_ventas(
     skip: int = Query(0, ge=0), 
     limit: int = Query(10, gt=0),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_VENTAS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/ventas"))
 ):
     """
     Obtiene una lista paginada de ventas con opciones de filtrado y búsqueda.
@@ -190,7 +186,7 @@ def read_ventas(
 @router.get("/{venta_id}", response_model=Venta)
 def get_venta(
     venta: DBVenta = Depends(get_venta_or_404),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_VENTAS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/ventas"))
 ):
     """
     Obtiene los detalles de una venta específica por su ID.
@@ -201,7 +197,7 @@ def get_venta(
 def anular_venta(
     db_venta: DBVenta = Depends(get_venta_or_404),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_VENTAS))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/ventas"))
 ):
     """
     Anula una venta existente y repone el stock de los productos involucrados.
