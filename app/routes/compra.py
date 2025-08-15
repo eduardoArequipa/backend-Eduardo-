@@ -20,6 +20,7 @@ from ..models.usuario import Usuario as DBUsuario
 from ..models.persona import Persona as DBPersona
 from ..models.empresa import Empresa as DBEmpresa
 from ..models.enums import EstadoCompraEnum , EstadoEnum
+from ..models.conversiones_compra import ConversionesCompra as DBConversionesCompra
 
 
 
@@ -136,22 +137,19 @@ def notify_proveedor(db: Session, compra_id: int, proveedor_id: int, total: Deci
 def create_compra(
     compra_data: CompraCreate,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/compras")) # Verificar acceso al menú de categorías
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/compras"))
 ):
     """
-    Crea una nueva Compra con sus detalles, actualiza el stock de productos
-    y opcionalmente notifica al proveedor por WhatsApp (si Twilio está configurado).
-    Solo accesible por usuarios con permisos de gestión de compras.
+    Crea una nueva Compra con sus detalles. El stock NO se modifica hasta que la compra se marca como 'completada'.
     """
     db.begin_nested() 
 
     try:
-      
         db_proveedor = db.query(DBProveedor).filter(
             DBProveedor.proveedor_id == compra_data.proveedor_id,
             DBProveedor.estado == EstadoEnum.activo
         ).first()
-        if db_proveedor is None:
+        if not db_proveedor:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Proveedor con ID {compra_data.proveedor_id} no encontrado o inactivo.")
 
         if not compra_data.detalles:
@@ -160,32 +158,29 @@ def create_compra(
         total_compra = Decimal(0)
         db_detalles = []
         
-        # Recopilar todos los IDs de producto únicos de los detalles entrantes
-        product_ids_in_details = {detalle.producto_id for detalle in compra_data.detalles}
-        
-        # Obtener todos los productos necesarios en una sola consulta
-        # Usar un diccionario para una búsqueda eficiente
-        products_map = {
-            p.producto_id: p for p in db.query(DBProducto).filter(
-                DBProducto.producto_id.in_(product_ids_in_details),
-                DBProducto.estado == EstadoEnum.activo
-            ).all()
-        }
+        product_ids = {detalle.producto_id for detalle in compra_data.detalles}
+        products_map = {p.producto_id: p for p in db.query(DBProducto).filter(DBProducto.producto_id.in_(product_ids)).options(joinedload(DBProducto.conversiones)).all()}
 
         for detalle_data in compra_data.detalles:
             db_producto = products_map.get(detalle_data.producto_id)
-            if db_producto is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Producto con ID {detalle_data.producto_id} en el detalle no encontrado o inactivo.")
+            if not db_producto or db_producto.estado != EstadoEnum.activo:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Producto con ID {detalle_data.producto_id} no encontrado o inactivo.")
 
             if detalle_data.cantidad <= 0:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"La cantidad para el producto ID {detalle_data.producto_id} debe ser positiva.")
+
+            # Validar presentación si existe
+            if detalle_data.presentacion_compra:
+                conversion = next((c for c in db_producto.conversiones if c.nombre_presentacion == detalle_data.presentacion_compra), None)
+                if not conversion:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"La presentación de compra '{detalle_data.presentacion_compra}' no es válida para el producto '{db_producto.nombre}'.")
 
             precio_unitario_final = detalle_data.precio_unitario
             if precio_unitario_final is None or precio_unitario_final == Decimal(0):
                 if db_producto.precio_compra is not None:
                     precio_unitario_final = db_producto.precio_compra
                 else:
-                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"El producto '{db_producto.nombre}' (ID: {db_producto.producto_id}) no tiene un precio de compra definido y no se proporcionó un precio unitario para el detalle.")
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"El producto '{db_producto.nombre}' (ID: {db_producto.producto_id}) no tiene un precio de compra definido.")
             
             if precio_unitario_final < 0:
                  raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"El precio unitario final para el producto ID {detalle_data.producto_id} no puede ser negativo.")
@@ -196,45 +191,37 @@ def create_compra(
             db_detalle = DBDetalleCompra(
                 producto_id=detalle_data.producto_id,
                 cantidad=detalle_data.cantidad,
-                precio_unitario=precio_unitario_final 
+                precio_unitario=precio_unitario_final,
+                presentacion_compra=detalle_data.presentacion_compra
             )
             db_detalles.append(db_detalle)
-            
-            # Actualizar el stock directamente en el objeto de producto obtenido
-            db_producto.stock = (db_producto.stock or 0) + detalle_data.cantidad
-            db.add(db_producto) # Marcar como modificado para la actualización
 
         nueva_compra = DBCompra(
             proveedor_id=compra_data.proveedor_id,
-            fecha_compra=compra_data.fecha_compra or datetime.now(timezone.utc), # Asigna fecha actual si no se proporciona
+            fecha_compra=compra_data.fecha_compra or datetime.now(timezone.utc),
             total=total_compra,
-            estado=compra_data.estado,
-            creado_por=current_user.usuario_id,
-            modificado_por=None
+            estado=compra_data.estado or EstadoCompraEnum.pendiente,
+            creado_por=current_user.usuario_id
         )
 
         nueva_compra.detalles.extend(db_detalles)
-
         db.add(nueva_compra)
-        db.flush() # Usar flush para obtener nueva_compra.compra_id antes del commit
-
         db.commit()
-        db.refresh(nueva_compra, attribute_names=['proveedor', 'creador', 'modificador', 'detalles']) # Refrescar con relaciones
+        db.refresh(nueva_compra)
 
         try:
             notify_proveedor(db, nueva_compra.compra_id, nueva_compra.proveedor_id, nueva_compra.total)
         except Exception as e:
-            logger.error(f"Error al intentar notificar al proveedor para compra {nueva_compra.compra_id}: {e}")
+            logger.error(f"Error al notificar al proveedor: {e}")
 
-        return nueva_compra # Return the refreshed object
+        return nueva_compra
 
     except HTTPException as e:
-        db.rollback() # Revertir todos los cambios en caso de HTTPException
+        db.rollback()
         raise e
     except Exception as e:
-        db.rollback() # Revertir todos los cambios en caso de cualquier otro error
-        
-        logger.error(f"Error inesperado durante la creación de Compra: {e}", exc_info=True)
+        db.rollback()
+        logger.error(f"Error inesperado al crear Compra: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Ocurrió un error al crear la Compra.")
 
 
@@ -344,155 +331,96 @@ def update_compra(
     compra_id: int,
     compra_update: CompraUpdate,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/compras")) # Verificar acceso al menú de categorías
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/compras"))
 ):
-
+    """
+    Actualiza una compra que está en estado 'pendiente'. 
+    No modifica el stock, solo los detalles de la orden de compra.
+    """
     db.begin_nested() 
 
     try:
         db_compra = db.query(DBCompra).options(
-            joinedload(DBCompra.proveedor).joinedload(DBProveedor.persona),
-            joinedload(DBCompra.proveedor).joinedload(DBProveedor.empresa),
-            joinedload(DBCompra.creador),
-            joinedload(DBCompra.modificador),
-            joinedload(DBCompra.detalles).joinedload(DBDetalleCompra.producto) # Cargar los detalles y sus productos
+            joinedload(DBCompra.detalles).joinedload(DBDetalleCompra.producto)
         ).filter(DBCompra.compra_id == compra_id).first()
 
         if db_compra is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Compra no encontrada.")
 
-        if db_compra.estado in [EstadoCompraEnum.completada, EstadoCompraEnum.anulada]:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"No se puede modificar una compra en estado '{db_compra.estado.value}'.")
+        if db_compra.estado != EstadoCompraEnum.pendiente:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Solo se pueden modificar compras en estado 'pendiente'. Estado actual: '{db_compra.estado.value}'.")
 
-        update_data_compra = compra_update.model_dump(exclude_unset=True, exclude={'detalles'})
+        update_data = compra_update.model_dump(exclude_unset=True, exclude={'detalles'})
 
-        if 'proveedor_id' in update_data_compra and update_data_compra['proveedor_id'] != db_compra.proveedor_id:
-            db_new_proveedor = db.query(DBProveedor).filter(
-                DBProveedor.proveedor_id == update_data_compra['proveedor_id'],
-                DBProveedor.estado == EstadoEnum.activo
-            ).first()
-            if not db_new_proveedor:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nuevo proveedor no encontrado o inactivo.")
-            db_compra.proveedor_id = update_data_compra['proveedor_id']
+        # Actualizar campos de la compra principal
+        for key, value in update_data.items():
+            setattr(db_compra, key, value)
 
-        if 'fecha_compra' in update_data_compra:
-            db_compra.fecha_compra = update_data_compra['fecha_compra']
-
-        if 'estado' in update_data_compra and update_data_compra['estado'] != db_compra.estado:
-            db_compra.estado = update_data_compra['estado']
-
+        # Actualizar detalles si se proporcionan
         if compra_update.detalles is not None:
-            productos_stock_change = {}
-
-            # Calculate stock changes from existing details (revert)
-            for db_detalle in db_compra.detalles:
-                productos_stock_change[db_detalle.producto_id] = productos_stock_change.get(db_detalle.producto_id, 0) - db_detalle.cantidad
-
-            # Delete old details
-            for db_detalle in list(db_compra.detalles):
-                db.delete(db_detalle)
-            db.flush()
-
-            new_db_detalles = []
-            
-            # Collect all unique product IDs from incoming details
-            incoming_product_ids = {d.producto_id for d in compra_update.detalles}
-            
-            # Fetch all products for incoming details in one query
-            incoming_products_map = {
-                p.producto_id: p for p in db.query(DBProducto).filter(
-                    DBProducto.producto_id.in_(incoming_product_ids),
-                    DBProducto.estado == EstadoEnum.activo
-                ).all()
-            }
-
-            for incoming_detalle_data in compra_update.detalles:
-                db_producto = incoming_products_map.get(incoming_detalle_data.producto_id)
-                if db_producto is None:
-                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Producto con ID {incoming_detalle_data.producto_id} en el detalle no encontrado o inactivo.")
-
-                if incoming_detalle_data.cantidad <= 0:
-                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"La cantidad para el producto ID {incoming_detalle_data.producto_id} debe ser positiva.")
-
-                precio_unitario_final = incoming_detalle_data.precio_unitario
-                if precio_unitario_final is None or precio_unitario_final == Decimal(0):
-                    if db_producto.precio_compra is not None:
-                        precio_unitario_final = db_producto.precio_compra
-                    else:
-                        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"El producto '{db_producto.nombre}' (ID: {db_producto.producto_id}) no tiene un precio de compra definido y no se proporcionó un precio unitario para el detalle.")
-                
-                if precio_unitario_final < 0:
-                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"El precio unitario final para el producto ID {incoming_detalle_data.producto_id} no puede ser negativo.")
-
-                new_db_detalle = DBDetalleCompra(
-                    producto_id=incoming_detalle_data.producto_id,
-                    cantidad=incoming_detalle_data.cantidad,
-                    precio_unitario=precio_unitario_final 
-                )
-                new_db_detalles.append(new_db_detalle)
-                
-                productos_stock_change[incoming_detalle_data.producto_id] = productos_stock_change.get(incoming_detalle_data.producto_id, 0) + incoming_detalle_data.cantidad
-
-            db_compra.detalles.extend(new_db_detalles)
-            db.flush()
-            
-            # Aplicar los cambios de stock consolidados
-            for producto_id, change in productos_stock_change.items():
-                db_producto = incoming_products_map.get(producto_id) # Use the map for lookup
-                if db_producto:
-                    db_producto.stock = (db_producto.stock or 0) + change
-                    db.add(db_producto)
-                else:
-                    logger.warning(f"Producto con ID {producto_id} no encontrado al intentar ajustar stock para la compra {compra_id}.")
-
-            db.flush()
-            new_total = Decimal(0)
-            db.refresh(db_compra, attribute_names=['detalles'])
+            # Eliminar detalles antiguos
             for detalle in db_compra.detalles:
-                new_total += Decimal(str(detalle.cantidad)) * Decimal(str(detalle.precio_unitario))
+                db.delete(detalle)
+            db.flush()
+
+            # Crear nuevos detalles y recalcular el total
+            new_total = Decimal(0)
+            new_detalles = []
+            
+            product_ids = {d.producto_id for d in compra_update.detalles}
+            products_map = {p.producto_id: p for p in db.query(DBProducto).filter(DBProducto.producto_id.in_(product_ids)).options(joinedload(DBProducto.conversiones)).all()}
+
+            for detalle_data in compra_update.detalles:
+                db_producto = products_map.get(detalle_data.producto_id)
+                if not db_producto or db_producto.estado != EstadoEnum.activo:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Producto con ID {detalle_data.producto_id} no encontrado o inactivo.")
+                
+                if detalle_data.cantidad <= 0:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La cantidad debe ser positiva.")
+
+                # Validar presentación
+                if detalle_data.presentacion_compra:
+                    conversion = next((c for c in db_producto.conversiones if c.nombre_presentacion == detalle_data.presentacion_compra), None)
+                    if not conversion:
+                        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Presentación '{detalle_data.presentacion_compra}' no válida para '{db_producto.nombre}'.")
+
+                precio_unitario = detalle_data.precio_unitario
+                if precio_unitario is None or precio_unitario == Decimal(0):
+                    if db_producto.precio_compra is not None:
+                        precio_unitario = db_producto.precio_compra
+                    else:
+                        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"El producto '{db_producto.nombre}' no tiene un precio de compra definido.")
+
+                new_total += detalle_data.cantidad * precio_unitario
+                new_detalles.append(DBDetalleCompra(**detalle_data.model_dump()))
+
+            db_compra.detalles = new_detalles
             db_compra.total = new_total
 
         db_compra.modificado_por = current_user.usuario_id
-
-        db.commit() 
-        db.refresh(db_compra) 
-
-        db_compra_for_response = db.query(DBCompra).options(
-            joinedload(DBCompra.proveedor).joinedload(DBProveedor.persona),
-            joinedload(DBCompra.proveedor).joinedload(DBProveedor.empresa),
-            joinedload(DBCompra.creador),
-            joinedload(DBCompra.modificador),
-            joinedload(DBCompra.detalles).joinedload(DBDetalleCompra.producto)
-        ).filter(DBCompra.compra_id == db_compra.compra_id).first()
-
-        return db_compra_for_response
+        db.commit()
+        db.refresh(db_compra)
+        return db_compra
 
     except HTTPException as e:
-        db.rollback() # Revertir todos los cambios en caso de HTTPException
+        db.rollback()
         raise e
     except Exception as e:
-        db.rollback() # Revertir todos los cambios en caso de cualquier otro error
-         
-        logger.error(f"Error inesperado durante la creación de Compra: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Ocurrió un error al crear la Compra.")
+        db.rollback()
+        logger.error(f"Error inesperado al actualizar Compra: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Ocurrió un error al actualizar la Compra.")
 
 @router.patch("/{compra_id}/anular", response_model=Compra)
 def anular_compra(
     compra_id: int,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/compras")) # Verificar acceso al menú de categorías
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/compras"))
 ):
     """
-    Anula una Compra por su ID y revierte el stock de los productos asociados.
-    Solo accesible por usuarios con permisos de gestión de compras.
+    Anula una Compra por su ID. Esta acción es solo un cambio de estado y no revierte el stock,
+    asumiendo que el stock solo se añade al completar la compra.
     """
-    db_compra = db.query(DBCompra).options(
-        joinedload(DBCompra.proveedor).joinedload(DBProveedor.persona),
-        joinedload(DBCompra.proveedor).joinedload(DBProveedor.empresa),
-        joinedload(DBCompra.creador),
-        joinedload(DBCompra.modificador),
-        joinedload(DBCompra.detalles).joinedload(DBDetalleCompra.producto)
-    ).filter(DBCompra.compra_id == compra_id).first()
+    db_compra = db.query(DBCompra).filter(DBCompra.compra_id == compra_id).first()
 
     if db_compra is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Compra no encontrada.")
@@ -500,33 +428,17 @@ def anular_compra(
     if db_compra.estado == EstadoCompraEnum.anulada:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La compra ya está anulada.")
 
+    if db_compra.estado == EstadoCompraEnum.completada:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No se puede anular una compra que ya fue completada. Se debe gestionar una devolución.")
+
     try:
         db.begin_nested() 
-
-        # Collect all unique product IDs from the details
-        product_ids_in_details = {detalle.producto_id for detalle in db_compra.detalles}
-        
-        # Fetch all necessary products in a single query
-        products_map = {
-            p.producto_id: p for p in db.query(DBProducto).filter(
-                DBProducto.producto_id.in_(product_ids_in_details)
-            ).all()
-        }
-
-        for detalle in db_compra.detalles:
-            db_producto = products_map.get(detalle.producto_id)
-            if db_producto:
-                if (db_producto.stock or 0) < detalle.cantidad:
-                     logger.warning(f"Intentando revertir stock para Producto ID {detalle.producto_id} (Compra {compra_id}), pero el stock actual ({db_producto.stock or 0}) es menor que la cantidad a restar ({detalle.cantidad}). Esto podría llevar a stock negativo.")
-
-                db_producto.stock = (db_producto.stock or 0) - detalle.cantidad
-                db.add(db_producto) 
 
         db_compra.estado = EstadoCompraEnum.anulada
         db_compra.modificado_por = current_user.usuario_id 
 
         db.commit()
-        db.refresh(db_compra, attribute_names=['proveedor', 'creador', 'modificador', 'detalles']) # Refresh with relations
+        db.refresh(db_compra)
 
         return db_compra 
 
@@ -535,26 +447,22 @@ def anular_compra(
         raise e
     except Exception as e:
         db.rollback()
-        logger.error(f"Error al anular compra {compra_id} y revertir stock: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Ocurrió un error al anular la compra y revertir el stock.")
+        logger.error(f"Error al anular compra {compra_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Ocurrió un error al anular la compra.")
 
 
 @router.patch("/{compra_id}/completar", response_model=Compra)
 def completar_compra(
     compra_id: int,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/compras")) # Verificar acceso al menú de categorías
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/compras"))
 ):
     """
-    Marca una Compra como 'completada' por su ID y actualiza el stock de los productos asociados.
-    Solo accesible por usuarios con permisos de gestión de compras.
+    Marca una Compra como 'completada' y actualiza el stock de los productos asociados
+    utilizando la lógica de conversión de unidades de forma robusta.
     """
     db_compra = db.query(DBCompra).options(
-        joinedload(DBCompra.proveedor).joinedload(DBProveedor.persona),
-        joinedload(DBCompra.proveedor).joinedload(DBProveedor.empresa),
-        joinedload(DBCompra.creador),
-        joinedload(DBCompra.modificador),
-        joinedload(DBCompra.detalles).joinedload(DBDetalleCompra.producto)
+        joinedload(DBCompra.detalles).joinedload(DBDetalleCompra.producto).joinedload(DBProducto.conversiones)
     ).filter(DBCompra.compra_id == compra_id).first()
 
     if db_compra is None:
@@ -568,28 +476,36 @@ def completar_compra(
     try:
         db.begin_nested()
 
-        # Collect all unique product IDs from the details
-        product_ids_in_details = {detalle.producto_id for detalle in db_compra.detalles}
-        
-        # Fetch all necessary products in a single query
-        products_map = {
-            p.producto_id: p for p in db.query(DBProducto).filter(
-                DBProducto.producto_id.in_(product_ids_in_details)
-            ).all()
-        }
-
         for detalle in db_compra.detalles:
-            db_producto = products_map.get(detalle.producto_id)
-            if db_producto:
-                db_producto.stock = (db_producto.stock or 0) + detalle.cantidad 
-                db_producto.modificado_por = current_user.usuario_id
-                db.add(db_producto)
+            db_producto = detalle.producto
+            if not db_producto:
+                continue
+
+            conversion_factor = Decimal(1)
+            if detalle.presentacion_compra and detalle.presentacion_compra != 'Unidad':
+                # Búsqueda insensible a mayúsculas y espacios
+                presentacion_nombre = detalle.presentacion_compra.strip()
+                conversion = next((c for c in db_producto.conversiones if c.nombre_presentacion.lower() == presentacion_nombre.lower()), None)
+                
+                if conversion:
+                    conversion_factor = conversion.unidad_inventario_por_presentacion
+                else:
+                    # Si se especifica una presentación pero no se encuentra, es un error.
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"La presentación '{detalle.presentacion_compra}' no es válida para el producto '{db_producto.nombre}'."
+                    )
+            
+            stock_to_add = Decimal(detalle.cantidad) * conversion_factor
+            
+            db_producto.stock = (db_producto.stock or Decimal(0)) + stock_to_add
+            db.add(db_producto)
 
         db_compra.estado = EstadoCompraEnum.completada
         db_compra.modificado_por = current_user.usuario_id 
 
         db.commit() 
-        db.refresh(db_compra, attribute_names=['proveedor', 'creador', 'modificador', 'detalles']) # Refrescar con relaciones
+        db.refresh(db_compra)
 
         return db_compra
 

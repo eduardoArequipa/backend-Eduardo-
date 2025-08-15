@@ -1,71 +1,67 @@
-# schemas/venta.py
-
+# backEnd/app/schemas/venta.py
+from pydantic import BaseModel
 from typing import List, Optional
-from datetime import datetime
 from decimal import Decimal
-from pydantic import BaseModel, Field
+from datetime import datetime
+from ..schemas.persona import PersonaBase
+from ..schemas.metodo_pago import MetodoPago
 from ..models.enums import EstadoVentaEnum
-from .usuario import UsuarioAudit
-from .metodo_pago import MetodoPagoNested
-from .persona import PersonaNested
-from .pagination import Pagination
 
+# Esquema base para Producto (usado en la respuesta de Venta)
 class ProductoSchemaBase(BaseModel):
     producto_id: int
-    codigo: str = Field(..., description="Código único del producto (para escáner)")
     nombre: str
-    precio_venta: Decimal = Field(..., gt=0, decimal_places=2, description="Precio actual de venta del producto")
-    stock: int = Field(..., ge=0, description="Cantidad en stock del producto")
+    codigo: str
 
     class Config:
         from_attributes = True
 
+# Esquema base para DetalleVenta
 class DetalleVentaBase(BaseModel):
-    producto_id: int = Field(..., description="ID del producto vendido")
-    cantidad: Decimal = Field(..., gt=0, description="Cantidad del producto vendido (puede ser decimal para productos metrados)")
-    precio_unitario: Decimal = Field(..., gt=0, decimal_places=2, description="Precio unitario al momento de la venta (debe ser mayor a 0)")
+    producto_id: int
+    cantidad: Decimal
+    precio_unitario: Decimal
+    presentacion_venta: Optional[str] = None
 
+    class Config:
+        from_attributes = True
+
+# Esquema para crear un DetalleVenta
 class DetalleVentaCreate(DetalleVentaBase):
-    """Esquema para crear un detalle de venta."""
     pass
 
+# Esquema para leer un DetalleVenta (respuesta)
 class DetalleVenta(DetalleVentaBase):
-    """Esquema para leer un detalle de venta, con ID y producto anidado."""
     detalle_id: int
-    producto: ProductoSchemaBase
-    subtotal: Decimal = Field(..., decimal_places=2, description="Subtotal de este detalle de venta")
+    venta_id: int
+    producto: ProductoSchemaBase # Incluir el producto completo
 
-    class Config:
-        from_attributes = True
-
+# Esquema base para Venta
 class VentaBase(BaseModel):
-    persona_id: Optional[int] = Field(None, description="ID de la persona (cliente) asociada a la venta (opcional)")
-    metodo_pago_id: int = Field(..., description="ID del método de pago utilizado")
-    estado: EstadoVentaEnum = Field(EstadoVentaEnum.activa, description="Estado de la venta (activa, anulada)")
+    persona_id: Optional[int] = None
+    metodo_pago_id: int
+    estado: EstadoVentaEnum = EstadoVentaEnum.activa
 
+# Esquema para crear una Venta
 class VentaCreate(VentaBase):
-    """Esquema para crear una nueva venta, incluye los detalles anidados."""
-    detalles: List[DetalleVentaCreate] = Field(..., min_length=1, description="Lista de detalles de la venta (al menos uno)")
-    total: Decimal = Field(..., decimal_places=2, description="Total de la venta (calculado en el backend)")
+    detalles: List[DetalleVentaCreate]
 
-class VentaUpdate(BaseModel):
-    """Esquema para actualizar el estado de una venta (o campos limitados)."""
-    estado: Optional[EstadoVentaEnum] = Field(None, description="Nuevo estado de la venta")
- 
+# Esquema para leer una Venta (respuesta)
 class Venta(VentaBase):
-    """Esquema para leer una venta completa, incluyendo ID, fechas, total y relaciones."""
     venta_id: int
     fecha_venta: datetime
-    total: Decimal = Field(..., decimal_places=2)
-    persona: Optional[PersonaNested]
-    metodo_pago: MetodoPagoNested
-    detalles: List[DetalleVenta]
-    creador: Optional[UsuarioAudit]
-    modificador: Optional[UsuarioAudit]
+    total: Decimal
+    creado_por: Optional[int] = None
+    modificado_por: Optional[int] = None
+    
+    persona: Optional[PersonaBase] = None
+    metodo_pago: MetodoPago
+    detalles: List[DetalleVenta] = []
 
     class Config:
         from_attributes = True
 
-class VentaPagination(Pagination[Venta]):
-    """Esquema para la respuesta paginada de ventas."""
-    pass
+# Esquema para la paginación de Ventas
+class VentaPagination(BaseModel):
+    items: List[Venta]
+    total: int

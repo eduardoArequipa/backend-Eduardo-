@@ -13,13 +13,15 @@ from ..models.categoria import Categoria as DBCategoria
 from ..models.usuario import Usuario as DBUsuario
 from ..models.unidad_medida import UnidadMedida as DBUnidadMedida
 from ..models.marca import Marca as DBMarca
+from ..models.conversiones_compra import ConversionesCompra as DBConversionesCompra
 from ..schemas.producto import (
-    ProductoBase,
+    Producto,
     ProductoCreate,
     ProductoUpdate,
-    Producto,
+    ProductoPagination,
     ProductoNested,
-    ProductoPagination # Importar el nuevo esquema de paginación
+    ConversionesCompra,
+    ConversionesCompraCreate
 )
 
 UPLOAD_DIR_PRODUCTS = "static/uploads/products"
@@ -34,7 +36,6 @@ def delete_image_file(image_path: Optional[str]):
                 if os.path.exists(file_to_delete_relative):
                     os.remove(file_to_delete_relative)
         except Exception as e:
-            # Opcional: puedes registrar el error si lo deseas
             pass
                     
 
@@ -43,66 +44,57 @@ router = APIRouter(
     tags=["productos"]
 )
 
-ROLES_CAN_MANAGE_PRODUCTS = ["Administrador", "Empleado"]
-
 @router.post("/", response_model=Producto, status_code=status.HTTP_201_CREATED)
 def create_producto(
     producto: ProductoCreate,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos")) # Verificar acceso al menú de categorías
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos"))
 ):
     db_categoria = db.query(DBCategoria).filter(DBCategoria.categoria_id == producto.categoria_id).first()
-    if db_categoria is None:
+    if not db_categoria:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Categoría no encontrada.")
 
-    db_unidad_medida = db.query(DBUnidadMedida).filter(DBUnidadMedida.unidad_id == producto.unidad_medida_id).first()
-    if db_unidad_medida is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unidad de medida no encontrada.")
+    db_unidad_inventario = db.query(DBUnidadMedida).filter(DBUnidadMedida.unidad_id == producto.unidad_inventario_id).first()
+    if not db_unidad_inventario:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unidad de inventario no encontrada.")
 
     db_marca = db.query(DBMarca).filter(DBMarca.marca_id == producto.marca_id).first()
-    if db_marca is None:
+    if not db_marca:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Marca no encontrada.")
 
     db_producto_codigo = db.query(DBProducto).filter(DBProducto.codigo == producto.codigo).first()
     if db_producto_codigo:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ya existe un producto con este código.")
 
-    if producto.metros_por_rollo is not None and db_unidad_medida.nombre_unidad != "Metro":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El campo metros_por_rollo solo es válido para unidades de medida 'metro'.")
-
-    # Convertir stock a metros si la unidad es "metro" y hay metros_por_rollo
-    if db_unidad_medida.nombre_unidad == "Metro" and producto.metros_por_rollo is not None:
-        producto.stock = producto.stock * producto.metros_por_rollo
-
-    # Crear el nuevo producto con los datos del esquema
     new_producto = DBProducto(**producto.model_dump())
     new_producto.creado_por = current_user.usuario_id
 
     db.add(new_producto)
     db.commit()
-    db.refresh(new_producto, attribute_names=['categoria', 'creador', 'modificador', 'unidad_medida', 'marca'])
+    db.refresh(new_producto, attribute_names=['categoria', 'creador', 'modificador', 'unidad_inventario', 'marca', 'conversiones'])
 
     return new_producto
 
-@router.get("/", response_model=ProductoPagination) # Cambiado a ProductoPagination
+@router.get("/", response_model=ProductoPagination)
 def read_productos(
     estado: Optional[EstadoEnum] = Query(None, description="Filtrar por estado"),
     search: Optional[str] = Query(None, description="Texto de búsqueda por código o nombre"),
     categoria_id: Optional[int] = Query(None, description="Filtrar por Categoría (ID)", alias="categoria"),
-    unidad_medida_id: Optional[int] = Query(None, description="Filtrar por Unidad de Medida (ID)", alias="unidad_medida"),
+    unidad_inventario_id: Optional[int] = Query(None, description="Filtrar por Unidad de Inventario (ID)", alias="unidad_inventario"),
     marca_id: Optional[int] = Query(None, description="Filtrar por Marca (ID)", alias="marca"),
     min_stock: Optional[Decimal] = Query(None, description="Filtrar por productos con stock mínimo"),
     skip: int = Query(0, ge=0, description="Número de elementos a omitir (paginación)"),
     limit: int = Query(100, gt=0, description="Número máximo de elementos a retornar (paginación)"),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos")) # Verificar acceso al menú de categorías
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos"))
 ):
     query = db.query(DBProducto).options(
         joinedload(DBProducto.categoria),
         joinedload(DBProducto.creador),
         joinedload(DBProducto.modificador),
-        joinedload(DBProducto.unidad_medida),
-        joinedload(DBProducto.marca)
+        joinedload(DBProducto.unidad_inventario),
+        joinedload(DBProducto.marca),
+        joinedload(DBProducto.conversiones)
     )
 
     if estado:
@@ -119,8 +111,8 @@ def read_productos(
     if categoria_id is not None:
         query = query.filter(DBProducto.categoria_id == categoria_id)
 
-    if unidad_medida_id is not None:
-        query = query.filter(DBProducto.unidad_medida_id == unidad_medida_id)
+    if unidad_inventario_id is not None:
+        query = query.filter(DBProducto.unidad_inventario_id == unidad_inventario_id)
 
     if marca_id is not None:
         query = query.filter(DBProducto.marca_id == marca_id)
@@ -128,24 +120,20 @@ def read_productos(
     if min_stock is not None:
         query = query.filter(DBProducto.stock >= min_stock)
 
-    total = query.count() # Contar el total de productos antes de aplicar skip/limit
+    total = query.count()
     productos = query.offset(skip).limit(limit).all()
 
-    return {"items": productos, "total": total} # Devolver el objeto de paginación
+    return {"items": productos, "total": total}
 
 
 @router.get("/low-stock", response_model=List[Producto])
 def get_low_stock_products(
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user) # Cualquier usuario logeado puede ver esto
+    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user)
 ):
-    """
-    Obtiene una lista de productos cuyo stock actual es igual o menor que su stock mínimo.
-    Accesible por cualquier usuario autenticado.
-    """
     low_stock_products = db.query(DBProducto).options(
         joinedload(DBProducto.categoria),
-        joinedload(DBProducto.unidad_medida),
+        joinedload(DBProducto.unidad_inventario),
         joinedload(DBProducto.marca),
         joinedload(DBProducto.creador),
         joinedload(DBProducto.modificador)
@@ -155,18 +143,20 @@ def get_low_stock_products(
     ).all()
 
     return low_stock_products
+
 @router.get("/{producto_id}", response_model=Producto)
 def read_producto(
     producto_id: int,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos")) # Verificar acceso al menú de categorías
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos"))
 ):
     producto = db.query(DBProducto).options(
         joinedload(DBProducto.categoria),
         joinedload(DBProducto.creador),
         joinedload(DBProducto.modificador),
-        joinedload(DBProducto.unidad_medida),
-        joinedload(DBProducto.marca)
+        joinedload(DBProducto.unidad_inventario),
+        joinedload(DBProducto.marca),
+        joinedload(DBProducto.conversiones)
     ).filter(DBProducto.producto_id == producto_id).first()
 
     if producto is None:
@@ -179,13 +169,13 @@ def update_producto(
     producto_id: int,
     producto_update: ProductoUpdate,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos")) # Verificar acceso al menú de categorías
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos"))
 ):
     db_producto = db.query(DBProducto).options(
         joinedload(DBProducto.categoria),
         joinedload(DBProducto.creador),
         joinedload(DBProducto.modificador),
-        joinedload(DBProducto.unidad_medida),
+        joinedload(DBProducto.unidad_inventario),
         joinedload(DBProducto.marca)
     ).filter(DBProducto.producto_id == producto_id).first()
 
@@ -213,8 +203,8 @@ def update_producto(
         if db_categoria is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La nueva Categoría especificada no fue encontrada.")
 
-    if 'unidad_medida_id' in update_data and update_data['unidad_medida_id'] is not None and update_data['unidad_medida_id'] != db_producto.unidad_medida_id:
-        db_unidad_medida = db.query(DBUnidadMedida).filter(DBUnidadMedida.unidad_id == update_data['unidad_medida_id']).first()
+    if 'unidad_inventario_id' in update_data and update_data['unidad_inventario_id'] is not None and update_data['unidad_inventario_id'] != db_producto.unidad_inventario_id:
+        db_unidad_medida = db.query(DBUnidadMedida).filter(DBUnidadMedida.unidad_id == update_data['unidad_inventario_id']).first()
         if db_unidad_medida is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La nueva Unidad de Medida especificada no fue encontrada.")
 
@@ -223,17 +213,13 @@ def update_producto(
         if db_marca is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La nueva Marca especificada no fue encontrada.")
 
-    if 'metros_por_rollo' in update_data and update_data['metros_por_rollo'] is not None:
-        db_unidad_medida = db.query(DBUnidadMedida).filter(DBUnidadMedida.unidad_id == db_producto.unidad_medida_id).first()
-        if db_unidad_medida.nombre_unidad != "Metro":
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El campo metros_por_rollo solo es válido para unidades de medida 'metro'.")
     for field, value in update_data.items():
         setattr(db_producto, field, value)
 
     db_producto.modificado_por = current_user.usuario_id
 
     db.commit()
-    db.refresh(db_producto, attribute_names=['categoria', 'creador', 'modificador', 'unidad_medida', 'marca'])
+    db.refresh(db_producto, attribute_names=['categoria', 'creador', 'modificador', 'unidad_inventario', 'marca', 'conversiones'])
 
     return db_producto
 
@@ -241,7 +227,7 @@ def update_producto(
 def delete_producto(
     producto_id: int,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos")) # Verificar acceso al menú de categorías
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos"))
 ):
     db_producto = db.query(DBProducto).filter(DBProducto.producto_id == producto_id).first()
     if db_producto is None:
@@ -265,13 +251,13 @@ def delete_producto(
 def activate_producto(
     producto_id: int,
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos")) # Verificar acceso al menú de categorías
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos"))
 ):
     db_producto = db.query(DBProducto).options(
         joinedload(DBProducto.categoria),
         joinedload(DBProducto.creador),
         joinedload(DBProducto.modificador),
-        joinedload(DBProducto.unidad_medida),
+        joinedload(DBProducto.unidad_inventario),
         joinedload(DBProducto.marca)
     ).filter(DBProducto.producto_id == producto_id).first()
 
@@ -293,20 +279,100 @@ def activate_producto(
 def read_producto_by_code(
     codigo: str,
     db: Session = Depends(get_db),
-  #  current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user_with_role(ROLES_CAN_MANAGE_PRODUCTS))
 ):
-    """
-    Obtiene un Producto específico buscando por su código de barras.
-    """
     producto = db.query(DBProducto).options(
         joinedload(DBProducto.categoria),
         joinedload(DBProducto.creador),
         joinedload(DBProducto.modificador),
-        joinedload(DBProducto.unidad_medida),
-        joinedload(DBProducto.marca)
+        joinedload(DBProducto.unidad_inventario),
+        joinedload(DBProducto.marca),
+        joinedload(DBProducto.conversiones)
     ).filter(DBProducto.codigo == codigo).first()
 
     if producto is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Producto con código '{codigo}' no encontrado.")
 
     return producto
+
+@router.get("/search/suggestions", response_model=List[ProductoNested])
+def search_product_suggestions(
+    q: str = Query(..., min_length=1, description="Término de búsqueda para código o nombre de producto"),
+    db: Session = Depends(get_db),
+    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user)
+):
+    productos = db.query(DBProducto).filter(
+        or_(
+            DBProducto.codigo.ilike(f"%{q}%"),
+            DBProducto.nombre.ilike(f"%{q}%")
+        ),
+        DBProducto.estado == EstadoEnum.activo
+    ).limit(10).all()
+
+    return productos
+
+@router.post("/conversiones/", response_model=ConversionesCompra, status_code=status.HTTP_201_CREATED)
+def create_conversion(
+    conversion_data: ConversionesCompraCreate,
+    producto_id: int,
+    db: Session = Depends(get_db),
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos"))
+):
+    db_producto = db.query(DBProducto).filter(DBProducto.producto_id == producto_id).first()
+    if not db_producto:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Producto no encontrado.")
+
+    existing_conversion = db.query(DBConversionesCompra).filter(
+        DBConversionesCompra.producto_id == producto_id,
+        DBConversionesCompra.nombre_presentacion == conversion_data.nombre_presentacion
+    ).first()
+    if existing_conversion:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Ya existe una presentación de compra con el nombre '{conversion_data.nombre_presentacion}' para este producto.")
+
+    new_conversion = DBConversionesCompra(
+        **conversion_data.model_dump(),
+        producto_id=producto_id
+    )
+    db.add(new_conversion)
+    db.commit()
+    db.refresh(new_conversion)
+    return new_conversion
+
+@router.put("/conversiones/{conversion_id}", response_model=ConversionesCompra)
+def update_conversion(
+    conversion_id: int,
+    conversion_data: ConversionesCompraCreate,
+    db: Session = Depends(get_db),
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos"))
+):
+    db_conversion = db.query(DBConversionesCompra).filter(DBConversionesCompra.conversion_id == conversion_id).first()
+    if not db_conversion:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversión no encontrada.")
+
+    if conversion_data.nombre_presentacion != db_conversion.nombre_presentacion:
+        existing_conversion = db.query(DBConversionesCompra).filter(
+            DBConversionesCompra.producto_id == db_conversion.producto_id,
+            DBConversionesCompra.nombre_presentacion == conversion_data.nombre_presentacion,
+            DBConversionesCompra.conversion_id != conversion_id
+        ).first()
+        if existing_conversion:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Ya existe otra presentación con el nombre '{conversion_data.nombre_presentacion}' para este producto.")
+
+    db_conversion.nombre_presentacion = conversion_data.nombre_presentacion
+    db_conversion.unidad_inventario_por_presentacion = conversion_data.unidad_inventario_por_presentacion
+    db.commit()
+    db.refresh(db_conversion)
+    return db_conversion
+
+@router.delete("/conversiones/{conversion_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_conversion(
+    conversion_id: int,
+    db: Session = Depends(get_db),
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos"))
+):
+    db_conversion = db.query(DBConversionesCompra).filter(DBConversionesCompra.conversion_id == conversion_id).first()
+    if not db_conversion:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversión no encontrada.")
+    
+    db.delete(db_conversion)
+    db.commit()
+    return {}

@@ -16,7 +16,7 @@ class UnidadMedida(Base):
     creado_en = Column(DateTime, default=func.now())
 
     # Relación inversa con Producto
-    productos = relationship("Producto", back_populates="unidad_medida")
+    productos = relationship("Producto", back_populates="unidad_inventario")
 
     def __repr__(self):
         return f"<UnidadMedida(unidad_id={self.unidad_id}, nombre_unidad='{self.nombre_unidad}', abreviatura='{self.abreviatura}')>"

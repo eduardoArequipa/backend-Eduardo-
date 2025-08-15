@@ -1,0 +1,10 @@
+ yo como administrador  lo que hago cuando hago una compra a un proveedor, puedo pedir los productos por caja, por unidad(osea docenaas)
+ ahora sobre los precios, yo no se cuanto sera el precio por unidad, solo se que el me dice que la caja esta a x precio
+ una ves que compre los productos, yo esos productos los puedo vender igual por caja unidad(cantidad que yo desee), ahora hay
+ hay tipos de productos que compro estos son productos que son de unidad(como pilas, tijeras,etc) y tambien hay otros(como cinta de 10 metros)
+ y eso yo los vendo por unidad (rollo), caja o por metros ya que cada hilo contiene 10 metros, entonces yo puedo venderlo por caja, rollo o metros
+ y eso es lo que quiero hacer, que cuando compre un producto, yo pueda decirle que cantidad de unidades tiene la caja, y que cantidad de metros tiene el rollo
+ y que cuando venda un producto, pueda venderlo por caja, rollo o metros, y que se haga la conversion automaticamente
+ y que cuando haga una compra, pueda decirle que cantidad de unidades tiene la caja, y que cantidad de metros tiene el rollo
+ y que cuando haga una venta, pueda venderlo por caja, rollo o metros, y que se haga la conversion automaticamente
+"""
