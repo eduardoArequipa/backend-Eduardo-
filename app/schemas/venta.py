@@ -45,6 +45,17 @@ class VentaBase(BaseModel):
 # Esquema para crear una Venta
 class VentaCreate(VentaBase):
     detalles: List[DetalleVentaCreate]
+    solicitar_factura: bool = False # <-- CAMPO AÑADIDO
+
+# Esquema para la información básica de una factura electrónica anidada
+class FacturaElectronicaBase(BaseModel):
+    factura_id: int
+    cuf: Optional[str] = None
+    estado: str
+
+    class Config:
+        from_attributes = True
+
 
 # Esquema para leer una Venta (respuesta)
 class Venta(VentaBase):
@@ -57,6 +68,7 @@ class Venta(VentaBase):
     persona: Optional[PersonaBase] = None
     metodo_pago: MetodoPago
     detalles: List[DetalleVenta] = []
+    factura_electronica: Optional[FacturaElectronicaBase] = None
 
     class Config:
         from_attributes = True

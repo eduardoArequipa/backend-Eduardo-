@@ -11,7 +11,7 @@ from app.database import engine, get_db
 from app.routes import (
     auth, usuario, rol, categoria, persona, producto, proveedor, 
     empresa, compra, venta, metodo_pago, marca, 
-    unidad_medida, dashboard, uploads, movimiento, reportes,menu,conversiones_compra
+    unidad_medida, dashboard, uploads, movimiento, reportes,menu,conversiones_compra, factura
 )
 from app.models.producto import Producto as DBProducto
 
@@ -153,3 +153,4 @@ app.include_router(menu.router)
 app.include_router(venta.router) # Para /ventas
 app.include_router(venta.router_productos_public) # Para /productos/buscar_por_codigo
 app.include_router(conversiones_compra.router)
+app.include_router(factura.router)

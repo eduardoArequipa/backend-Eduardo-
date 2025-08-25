@@ -17,6 +17,7 @@ from ..models.enums import EstadoVentaEnum, EstadoEnum
 from ..schemas.producto import Producto
 # Importar los esquemas actualizados
 from ..schemas.venta import Venta, VentaCreate, ProductoSchemaBase, VentaPagination
+from ..services.facturacion_service import crear_factura_tesabiz
 
 router = APIRouter(
     prefix="/ventas",
@@ -41,7 +42,8 @@ def get_venta_or_404(
         joinedload(DBVenta.metodo_pago),
         joinedload(DBVenta.creador),
         joinedload(DBVenta.modificador),
-        joinedload(DBVenta.detalles).joinedload(DBDetalleVenta.producto)
+        joinedload(DBVenta.detalles).joinedload(DBDetalleVenta.producto),
+        joinedload(DBVenta.factura_electronica)
     ).filter(DBVenta.venta_id == venta_id).first()
     if venta is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Venta no encontrada.")
@@ -100,77 +102,26 @@ def get_producto_by_codigo(
     return db_producto
 
 @router.post("/", response_model=Venta, status_code=status.HTTP_201_CREATED)
-def create_venta(
+async def create_venta(
     venta_data: VentaCreate,
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/ventas"))
 ):
     """
     Crea una nueva venta, valida stock y actualiza existencias de productos.
-    Ahora maneja correctamente las conversiones de unidades.
+    Si se solicita, llama al servicio de facturación electrónica.
     """
     db.begin_nested()
     try:
         if venta_data.persona_id:
             persona = db.query(DBPersona).filter(DBPersona.persona_id == venta_data.persona_id, DBPersona.estado == EstadoEnum.activo).first()
             if not persona:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Persona (cliente) con ID {venta_data.persona_id} no encontrada o inactiva.")
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Cliente con ID {venta_data.persona_id} no encontrado o inactivo.")
 
-        metodo_pago = db.query(DBMetodoPago).filter(DBMetodoPago.metodo_pago_id == venta_data.metodo_pago_id, DBMetodoPago.estado == EstadoEnum.activo).first()
-        if not metodo_pago:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Método de pago con ID {venta_data.metodo_pago_id} no encontrado o inactivo.")
-        
         if not venta_data.detalles:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La venta debe tener al menos un detalle de producto.")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La venta debe tener al menos un producto.")
 
-        total_venta = Decimal(0)
-        productos_a_actualizar = {}
-
-        # Precargar productos con sus conversiones para optimizar consultas
-        product_ids = [d.producto_id for d in venta_data.detalles]
-        productos_map = {
-            p.producto_id: p for p in db.query(DBProducto).options(
-                joinedload(DBProducto.conversiones)
-            ).filter(
-                DBProducto.producto_id.in_(product_ids), 
-                DBProducto.estado == EstadoEnum.activo
-            ).all()
-        }
-
-        for detalle_data in venta_data.detalles:
-            producto = productos_map.get(detalle_data.producto_id)
-            if not producto:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Producto con ID {detalle_data.producto_id} no encontrado o inactivo.")
-            
-            if detalle_data.cantidad <= 0:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"La cantidad para el producto ID {detalle_data.producto_id} debe ser un valor positivo.")
-            
-            # AQUÍ ESTÁ LA CORRECCIÓN PRINCIPAL:
-            # Calcular cuánto stock se necesita descontar en unidad mínima
-            presentacion_venta = getattr(detalle_data, 'presentacion_venta', 'Unidad')
-            stock_a_descontar = calcular_stock_en_unidad_minima(
-                producto, 
-                Decimal(str(detalle_data.cantidad)), 
-                presentacion_venta
-            )
-            
-            # Validar que hay suficiente stock en unidad mínima
-            stock_actual = producto.stock or 0
-            if stock_actual < stock_a_descontar:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST, 
-                    detail=f"Stock insuficiente para el producto '{producto.nombre}'. "
-                           f"Stock actual: {stock_actual} (unidad mínima), "
-                           f"Se requiere: {stock_a_descontar} (unidad mínima) "
-                           f"para {detalle_data.cantidad} {presentacion_venta}."
-                )
-            
-            total_venta += Decimal(str(detalle_data.cantidad)) * Decimal(str(detalle_data.precio_unitario))
-            
-            productos_a_actualizar[producto.producto_id] = {
-                "instancia": producto, 
-                "stock_a_descontar": stock_a_descontar
-            }
+        total_venta = sum(Decimal(str(d.cantidad)) * Decimal(str(d.precio_unitario)) for d in venta_data.detalles)
 
         nueva_venta = DBVenta(
             persona_id=venta_data.persona_id,
@@ -184,22 +135,31 @@ def create_venta(
         db.add(nueva_venta)
         db.flush()
 
-        # Actualizar el stock de los productos
-        for data in productos_a_actualizar.values():
-            producto_instancia = data["instancia"]
-            stock_a_descontar = data["stock_a_descontar"]
+        for detalle_data in venta_data.detalles:
+            producto = db.query(DBProducto).options(joinedload(DBProducto.conversiones)).filter(DBProducto.producto_id == detalle_data.producto_id).first()
+            stock_a_descontar = calcular_stock_en_unidad_minima(producto, Decimal(str(detalle_data.cantidad)), getattr(detalle_data, 'presentacion_venta', 'Unidad'))
             
-            producto_instancia.stock = (producto_instancia.stock or 0) - stock_a_descontar
-            producto_instancia.modificado_por = current_user.usuario_id
-            db.add(producto_instancia)
+            if producto.stock < stock_a_descontar:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Stock insuficiente para el producto '{producto.nombre}'.")
             
-            print(f"Stock actualizado para '{producto_instancia.nombre}': "
-                  f"Anterior: {(producto_instancia.stock or 0) + stock_a_descontar}, "
-                  f"Nuevo: {producto_instancia.stock}, "
-                  f"Descontado: {stock_a_descontar}")
+            producto.stock -= stock_a_descontar
+            db.add(producto)
 
         db.commit()
         db.refresh(nueva_venta)
+
+        # --- Lógica de Facturación Condicional ---
+        if venta_data.solicitar_factura:
+            if not venta_data.persona_id:
+                # Esta validación es crucial. Si se pide factura, el cliente es obligatorio.
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Se debe seleccionar un cliente para poder emitir una factura.")
+            try:
+                print(f"Iniciando proceso de facturación para la venta ID: {nueva_venta.venta_id}")
+                await crear_factura_tesabiz(nueva_venta.venta_id, db)
+                print(f"Proceso de facturación para la venta ID: {nueva_venta.venta_id} completado.")
+            except Exception as e:
+                # La venta se creó, pero la facturación falló. Se registra el error pero no se anula la transacción.
+                print(f"ALERTA: La venta {nueva_venta.venta_id} se creó exitosamente, pero falló la facturación electrónica: {e}")
         
         return get_venta_or_404(nueva_venta.venta_id, db)
 

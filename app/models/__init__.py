@@ -36,3 +36,4 @@ from .conversiones_compra import ConversionesCompra
 from .empresa import Empresa
 from .menu import Menu
 from .rol_menu import RolMenu
+from .factura_electronica import FacturaElectronica
