@@ -52,7 +52,7 @@ class Producto(Base):
     marca = relationship("Marca", back_populates="productos")
 
     # Nueva relación con las conversiones
-    conversiones = relationship("ConversionesCompra", back_populates="producto", cascade="all, delete-orphan")
+    conversiones = relationship("Conversion", back_populates="producto", cascade="all, delete-orphan")
 
     # El método __repr__ es útil para la depuración
     def __repr__(self):

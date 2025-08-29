@@ -10,18 +10,21 @@ from .pagination import Pagination
 
 # --- Nuevos esquemas para Conversiones de Compra ---
 
-class ConversionesCompraBase(BaseModel):
+class ConversionBase(BaseModel):
     nombre_presentacion: str
-    unidad_inventario_por_presentacion: Decimal
+    unidades_por_presentacion: Decimal
+    es_para_compra: bool
+    es_para_venta: bool
 
     model_config = ConfigDict(json_encoders={Decimal: str})
 
-class ConversionesCompraCreate(ConversionesCompraBase):
+class ConversionCreate(ConversionBase):
     pass
 
-class ConversionesCompra(ConversionesCompraBase):
-    conversion_id: int
+class Conversion(ConversionBase):
+    id: int
     producto_id: int
+    es_activo: Optional[bool] = None # Add es_activo as it's in the model
 
     model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: str})
 
@@ -73,7 +76,7 @@ class Producto(ProductoBase):
     marca: MarcaNested
     
     # Nueva relación anidada
-    conversiones: List[ConversionesCompra] = []
+    conversiones: List[Conversion] = []
 
     model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: str})
 

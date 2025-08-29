@@ -5,6 +5,7 @@ from decimal import Decimal
 from datetime import datetime
 from ..schemas.persona import PersonaBase
 from ..schemas.metodo_pago import MetodoPago
+from ..schemas.usuario import UsuarioAudit
 from ..models.enums import EstadoVentaEnum
 
 # Esquema base para Producto (usado en la respuesta de Venta)
@@ -62,8 +63,8 @@ class Venta(VentaBase):
     venta_id: int
     fecha_venta: datetime
     total: Decimal
-    creado_por: Optional[int] = None
-    modificado_por: Optional[int] = None
+    creador: Optional[UsuarioAudit] = None
+    modificador: Optional[UsuarioAudit] = None
     
     persona: Optional[PersonaBase] = None
     metodo_pago: MetodoPago

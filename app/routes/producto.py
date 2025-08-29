@@ -13,15 +13,15 @@ from ..models.categoria import Categoria as DBCategoria
 from ..models.usuario import Usuario as DBUsuario
 from ..models.unidad_medida import UnidadMedida as DBUnidadMedida
 from ..models.marca import Marca as DBMarca
-from ..models.conversiones_compra import ConversionesCompra as DBConversionesCompra
+from ..models.conversion import Conversion as DBConversion
 from ..schemas.producto import (
     Producto,
     ProductoCreate,
     ProductoUpdate,
     ProductoPagination,
     ProductoNested,
-    ConversionesCompra,
-    ConversionesCompraCreate
+    Conversion,
+    ConversionCreate
 )
 
 UPLOAD_DIR_PRODUCTS = "static/uploads/products"
@@ -310,9 +310,9 @@ def search_product_suggestions(
 
     return productos
 
-@router.post("/conversiones/", response_model=ConversionesCompra, status_code=status.HTTP_201_CREATED)
+@router.post("/conversiones/", response_model=Conversion, status_code=status.HTTP_201_CREATED)
 def create_conversion(
-    conversion_data: ConversionesCompraCreate,
+    conversion_data: ConversionCreate,
     producto_id: int,
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos"))
@@ -321,14 +321,15 @@ def create_conversion(
     if not db_producto:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Producto no encontrado.")
 
-    existing_conversion = db.query(DBConversionesCompra).filter(
-        DBConversionesCompra.producto_id == producto_id,
-        DBConversionesCompra.nombre_presentacion == conversion_data.nombre_presentacion
+    # Check for existing conversion with the same name for the same product
+    existing_conversion = db.query(DBConversion).filter(
+        DBConversion.producto_id == producto_id,
+        DBConversion.nombre_presentacion == conversion_data.nombre_presentacion
     ).first()
     if existing_conversion:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Ya existe una presentación de compra con el nombre '{conversion_data.nombre_presentacion}' para este producto.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Ya existe una presentación con el nombre '{conversion_data.nombre_presentacion}' para este producto.")
 
-    new_conversion = DBConversionesCompra(
+    new_conversion = DBConversion(
         **conversion_data.model_dump(),
         producto_id=producto_id
     )
@@ -337,28 +338,31 @@ def create_conversion(
     db.refresh(new_conversion)
     return new_conversion
 
-@router.put("/conversiones/{conversion_id}", response_model=ConversionesCompra)
+@router.put("/conversiones/{conversion_id}", response_model=Conversion)
 def update_conversion(
     conversion_id: int,
-    conversion_data: ConversionesCompraCreate,
+    conversion_data: ConversionCreate,
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos"))
 ):
-    db_conversion = db.query(DBConversionesCompra).filter(DBConversionesCompra.conversion_id == conversion_id).first()
+    db_conversion = db.query(DBConversion).filter(DBConversion.id == conversion_id).first()
     if not db_conversion:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversión no encontrada.")
 
     if conversion_data.nombre_presentacion != db_conversion.nombre_presentacion:
-        existing_conversion = db.query(DBConversionesCompra).filter(
-            DBConversionesCompra.producto_id == db_conversion.producto_id,
-            DBConversionesCompra.nombre_presentacion == conversion_data.nombre_presentacion,
-            DBConversionesCompra.conversion_id != conversion_id
+        existing_conversion = db.query(DBConversion).filter(
+            DBConversion.producto_id == db_conversion.producto_id,
+            DBConversion.nombre_presentacion == conversion_data.nombre_presentacion,
+            DBConversion.id != conversion_id
         ).first()
         if existing_conversion:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Ya existe otra presentación con el nombre '{conversion_data.nombre_presentacion}' para este producto.")
 
-    db_conversion.nombre_presentacion = conversion_data.nombre_presentacion
-    db_conversion.unidad_inventario_por_presentacion = conversion_data.unidad_inventario_por_presentacion
+    # Update all fields from conversion_data
+    update_data = conversion_data.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(db_conversion, field, value)
+
     db.commit()
     db.refresh(db_conversion)
     return db_conversion
@@ -369,7 +373,7 @@ def delete_conversion(
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos"))
 ):
-    db_conversion = db.query(DBConversionesCompra).filter(DBConversionesCompra.conversion_id == conversion_id).first()
+    db_conversion = db.query(DBConversion).filter(DBConversion.id == conversion_id).first()
     if not db_conversion:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversión no encontrada.")
     

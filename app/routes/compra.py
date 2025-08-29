@@ -20,7 +20,7 @@ from ..models.usuario import Usuario as DBUsuario
 from ..models.persona import Persona as DBPersona
 from ..models.empresa import Empresa as DBEmpresa
 from ..models.enums import EstadoCompraEnum , EstadoEnum
-from ..models.conversiones_compra import ConversionesCompra as DBConversionesCompra
+from ..models.conversion import Conversion as DBConversion
 
 
 
@@ -171,9 +171,9 @@ def create_compra(
 
             # Validar presentación si existe
             if detalle_data.presentacion_compra:
-                conversion = next((c for c in db_producto.conversiones if c.nombre_presentacion == detalle_data.presentacion_compra), None)
+                conversion = next((c for c in db_producto.conversiones if c.nombre_presentacion == detalle_data.presentacion_compra and c.es_para_compra), None)
                 if not conversion:
-                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"La presentación de compra '{detalle_data.presentacion_compra}' no es válida para el producto '{db_producto.nombre}'.")
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"La presentación de compra '{detalle_data.presentacion_compra}' no es válida o no está habilitada para compras en el producto '{db_producto.nombre}'.")
 
             precio_unitario_final = detalle_data.precio_unitario
             if precio_unitario_final is None or precio_unitario_final == Decimal(0):
@@ -380,9 +380,9 @@ def update_compra(
 
                 # Validar presentación
                 if detalle_data.presentacion_compra:
-                    conversion = next((c for c in db_producto.conversiones if c.nombre_presentacion == detalle_data.presentacion_compra), None)
+                    conversion = next((c for c in db_producto.conversiones if c.nombre_presentacion == detalle_data.presentacion_compra and c.es_para_compra), None)
                     if not conversion:
-                        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Presentación '{detalle_data.presentacion_compra}' no válida para '{db_producto.nombre}'.")
+                        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Presentación '{detalle_data.presentacion_compra}' no válida o no está habilitada para compras en '{db_producto.nombre}'.")
 
                 precio_unitario = detalle_data.precio_unitario
                 if precio_unitario is None or precio_unitario == Decimal(0):
@@ -458,8 +458,8 @@ def completar_compra(
     current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/compras"))
 ):
     """
-    Marca una Compra como 'completada' y actualiza el stock de los productos asociados
-    utilizando la lógica de conversión de unidades de forma robusta.
+    Marca una Compra como 'completada', actualiza el stock y el precio de compra
+    de los productos asociados, utilizando la lógica de conversión de unidades.
     """
     db_compra = db.query(DBCompra).options(
         joinedload(DBCompra.detalles).joinedload(DBDetalleCompra.producto).joinedload(DBProducto.conversiones)
@@ -482,23 +482,45 @@ def completar_compra(
                 continue
 
             conversion_factor = Decimal(1)
+            # El precio guardado en el detalle es el costo de la presentación (ej: precio de la caja)
+            precio_presentacion = Decimal(str(detalle.precio_unitario))
+
             if detalle.presentacion_compra and detalle.presentacion_compra != 'Unidad':
-                # Búsqueda insensible a mayúsculas y espacios
                 presentacion_nombre = detalle.presentacion_compra.strip()
-                conversion = next((c for c in db_producto.conversiones if c.nombre_presentacion.lower() == presentacion_nombre.lower()), None)
+                # Ahora busca una conversión que sea válida para compras
+                conversion = next((c for c in db_producto.conversiones if c.nombre_presentacion.lower() == presentacion_nombre.lower() and c.es_para_compra), None)
                 
                 if conversion:
-                    conversion_factor = conversion.unidad_inventario_por_presentacion
+                    # Asegurarse de que el factor de conversión no sea cero
+                    if conversion.unidades_por_presentacion > 0:
+                        conversion_factor = Decimal(conversion.unidades_por_presentacion)
+                    else:
+                         raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"El factor de conversión para la presentación '{detalle.presentacion_compra}' del producto '{db_producto.nombre}' es cero."
+                        )
                 else:
-                    # Si se especifica una presentación pero no se encuentra, es un error.
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"La presentación '{detalle.presentacion_compra}' no es válida para el producto '{db_producto.nombre}'."
+                        detail=f"La presentación '{detalle.presentacion_compra}' no es válida o no está habilitada para compras en el producto '{db_producto.nombre}'."
                     )
             
+            # --- INICIO DE LA NUEVA LÓGICA ---
+
+            # 1. Calcular el nuevo costo por unidad base
+            nuevo_precio_compra_unitario = precio_presentacion / conversion_factor
+
+            # 2. Calcular la cantidad total de unidades base a añadir al stock
             stock_to_add = Decimal(detalle.cantidad) * conversion_factor
             
+            # 3. Actualizar el stock del producto (Corregido a 'stock')
             db_producto.stock = (db_producto.stock or Decimal(0)) + stock_to_add
+            
+            # 4. Actualizar el precio de compra del producto al último costo calculado
+            db_producto.precio_compra = nuevo_precio_compra_unitario
+
+            # --- FIN DE LA NUEVA LÓGICA ---
+
             db.add(db_producto)
 
         db_compra.estado = EstadoCompraEnum.completada

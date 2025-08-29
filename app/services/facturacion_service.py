@@ -55,7 +55,7 @@ def construir_json_factura(venta_db: Venta, empresa_db: Empresa, usuario_db: Usu
         "complemento": None,
         "codigoSucursal": "0",
         "codigoPuntoVenta": "0",
-        "nombreRazonSocial": "EXPUGNO SRL",
+        "nombreRazonSocial": str(venta_db.persona.nombre) + str(" " + (venta_db.persona.apellido_paterno or "") + " " + (venta_db.persona.apellido_materno or "")),
         "codigoCliente": str(venta_db.persona.persona_id),
         "codigoExcepcion": 0,
         "codigoDocumentoSector": 35,
@@ -120,7 +120,7 @@ async def crear_factura_tesabiz(venta_id: int, db: Session):
         if proceso_respuesta:
             # Caso de Éxito (Respuesta con objeto 'proceso')
             codigo_recepcion = proceso_respuesta.get("codigoRecepcion")
-            cuf = proceso_respuesta.get("cuf")
+            cuf = respuesta_tesabiz.get("facturaCompraVentaBon", {}).get("cabecera", {}).get("cuf")
             print(f"[FACTURACION] -> Código de Recepción: {codigo_recepcion}, CUF: {cuf}")
 
             factura_db.cuf = cuf

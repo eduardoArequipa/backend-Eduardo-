@@ -65,23 +65,32 @@ def calcular_stock_en_unidad_minima(producto: DBProducto, cantidad_vendida: Deci
     if not presentacion_venta or presentacion_venta == 'Unidad':
         return cantidad_vendida
     
-    # Buscar la conversión correspondiente
+    # Buscar la conversión correspondiente y verificar que sea para venta
     presentacion_nombre = presentacion_venta.strip()
     conversion = None
     
     for c in producto.conversiones:
-        if c.nombre_presentacion.lower() == presentacion_nombre.lower():
+        # AÑADIDO: Verificar que la conversión esté habilitada para venta
+        if c.nombre_presentacion.lower() == presentacion_nombre.lower() and c.es_para_venta:
             conversion = c
             break
     
     if not conversion:
-        # Si no se encuentra la conversión, log del error y usar factor 1 como fallback
-        print(f"ADVERTENCIA: No se encontró la conversión '{presentacion_venta}' para el producto '{producto.nombre}'. Se usará factor 1.")
-        return cantidad_vendida
+        # Si no se encuentra la conversión o no está habilitada para venta, lanzar un error
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"La presentación de venta '{presentacion_venta}' no es válida o no está habilitada para ventas en el producto '{producto.nombre}'."
+        )
     
+    # Asegurarse de que el factor de conversión no sea cero
+    if conversion.unidades_por_presentacion <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"El factor de conversión para la presentación '{presentacion_venta}' del producto '{producto.nombre}' es cero o negativo."
+        )
+
     # Calcular la cantidad en unidad mínima
-    # cantidad_vendida * unidades_minimas_por_presentacion = total_en_unidad_minima
-    stock_a_descontar = cantidad_vendida * conversion.unidad_inventario_por_presentacion
+    stock_a_descontar = cantidad_vendida * conversion.unidades_por_presentacion
     
     return stock_a_descontar
 
