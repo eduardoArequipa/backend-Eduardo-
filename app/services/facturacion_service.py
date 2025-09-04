@@ -60,8 +60,8 @@ def construir_json_factura(venta_db: Venta, empresa_db: Empresa, usuario_db: Usu
         "codigoExcepcion": 0,
         "codigoDocumentoSector": 35,
         "nitEmisor": 1028341029,
-        "razonSocialEmisor": "Multicenter S.R.L.",
-        "municipio":  "COCHABAMBA - BOLIVIA",
+        "razonSocialEmisor": "Comercial S.R.L.",
+        "municipio":  "Lapaz - BOLIVIA",
         "usuario": "admin",
         "montoGiftCard": 0
     }

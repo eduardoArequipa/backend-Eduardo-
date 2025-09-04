@@ -395,3 +395,4 @@ def activate_proveedor(
     db.refresh(db_proveedor)
 
     return db_proveedor
+

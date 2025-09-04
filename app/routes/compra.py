@@ -60,7 +60,6 @@ router = APIRouter(
     tags=["compras"]
 )
 
-ROLES_CAN_MANAGE_COMPRAS = ["Administrador", "Empleado", ]
 
 
 # --- Función Utilitaria para Notificar al Proveedor (Simulación o Twilio) ---

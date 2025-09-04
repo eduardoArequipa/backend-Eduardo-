@@ -60,17 +60,7 @@ class CompraCreate(CompraBase):
 
 
 
-# backEnd/app/schemas/compra.py
-from typing import List, Optional
-from datetime import datetime
-from decimal import Decimal 
-from pydantic import BaseModel, ConfigDict 
 
-from ..models.enums import EstadoCompraEnum 
-from .proveedor import ProveedorNested
-from .usuario import UsuarioAudit 
-from .producto import ProductoNested
-from .pagination import Pagination # Importar la clase Pagination
 
 class DetalleCompraBase(BaseModel):
     producto_id: int 

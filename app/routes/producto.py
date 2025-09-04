@@ -14,6 +14,9 @@ from ..models.usuario import Usuario as DBUsuario
 from ..models.unidad_medida import UnidadMedida as DBUnidadMedida
 from ..models.marca import Marca as DBMarca
 from ..models.conversion import Conversion as DBConversion
+# 1. Importar modelos de detalles para la comprobación
+from ..models.detalle_venta import DetalleVenta
+from ..models.detalle_compra import DetalleCompra
 from ..schemas.producto import (
     Producto,
     ProductoCreate,
@@ -236,6 +239,34 @@ def delete_producto(
     if db_producto.estado == EstadoEnum.inactivo:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El producto ya está inactivo.")
 
+    # 2. Comprobación más granular de transacciones existentes
+    # Verificar ventas activas (no anuladas)
+    from ..models.venta import Venta as DBVenta
+    from ..models.compra import Compra as DBCompra
+    from ..models.enums import EstadoVentaEnum, EstadoCompraEnum
+    
+    active_sales = db.query(DetalleVenta).join(DBVenta).filter(
+        DetalleVenta.producto_id == producto_id,
+        DBVenta.estado == EstadoVentaEnum.activa
+    ).count()
+    
+    active_purchases = db.query(DetalleCompra).join(DBCompra).filter(
+        DetalleCompra.producto_id == producto_id,
+        DBCompra.estado.in_([EstadoCompraEnum.pendiente, EstadoCompraEnum.completada])
+    ).count()
+
+    if active_sales > 0 or active_purchases > 0:
+        transaction_details = []
+        if active_sales > 0:
+            transaction_details.append(f"{active_sales} venta(s) activa(s)")
+        if active_purchases > 0:
+            transaction_details.append(f"{active_purchases} compra(s) pendiente(s) o completada(s)")
+        
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Este producto no se puede desactivar porque está asociado a {' y '.join(transaction_details)}."
+        )
+
     db_producto.estado = EstadoEnum.inactivo
     db_producto.modificado_por = current_user.usuario_id
 
@@ -309,6 +340,21 @@ def search_product_suggestions(
     ).limit(10).all()
 
     return productos
+
+
+@router.get("/conversiones/", response_model=List[Conversion])
+def read_all_conversiones(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user)
+):
+    """
+    Obtiene una lista de todas las conversiones de todos los productos.
+    """
+    conversiones = db.query(DBConversion).offset(skip).limit(limit).all()
+    return conversiones
+
 
 @router.post("/conversiones/", response_model=Conversion, status_code=status.HTTP_201_CREATED)
 def create_conversion(

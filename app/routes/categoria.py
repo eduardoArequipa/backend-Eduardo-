@@ -45,7 +45,7 @@ def create_categoria(
     Crea una nueva Categoría.
     Solo accesible por usuarios con permisos de gestión de categorías.
     """
-    db_categoria = db.query(DBCategoria).filter(func.strip(func.lower(DBCategoria.nombre_categoria)) == categoria.nombre_categoria.lower().strip()
+    db_categoria = db.query(DBCategoria).filter(DBCategoria.nombre_categoria== categoria.nombre_categoria.lower().strip()
 ).first()
     if db_categoria:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ya existe una categoría con este nombre.")

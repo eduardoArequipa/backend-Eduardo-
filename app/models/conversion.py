@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Numeric
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DECIMAL
 from sqlalchemy.orm import relationship
 from .base import Base
 
@@ -8,7 +8,7 @@ class Conversion(Base):
     id = Column(Integer, primary_key=True, index=True)
     nombre_presentacion = Column(String(100), nullable=False)
     producto_id = Column(Integer, ForeignKey("productos.producto_id", ondelete="CASCADE"), nullable=False)
-    unidades_por_presentacion = Column(Numeric(10, 2), nullable=False)
+    unidades_por_presentacion = Column(DECIMAL(10, 2), nullable=False)
     
     es_para_compra = Column(Boolean, default=False, nullable=False)
     es_para_venta = Column(Boolean, default=False, nullable=False)

@@ -19,7 +19,7 @@ class Producto(Base):
     precio_compra = Column(DECIMAL(10, 2), nullable=False, default= 10) # Precio decimal no nulo
     precio_venta = Column(DECIMAL(10, 2), nullable=False, default= 10.0) # Precio decimal no nulo
 
-    stock = Column(Numeric(10, 2), default=0, nullable=False) # Stock ahora es NUMERIC
+    stock = Column(DECIMAL(10, 2), default=0, nullable=False) # Stock ahora es DECIMAL para consistencia
     stock_minimo = Column(Integer, nullable=False) # Stock mínimo no nulo
     
     # Renombrado a unidad_inventario_id
