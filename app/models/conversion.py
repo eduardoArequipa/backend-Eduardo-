@@ -13,6 +13,7 @@ class Conversion(Base):
     es_para_compra = Column(Boolean, default=False, nullable=False)
     es_para_venta = Column(Boolean, default=False, nullable=False)
     es_activo = Column(Boolean, default=True)
+    descripcion_detallada = Column(String(100), nullable=True)
 
     # Relación inversa con Producto
     producto = relationship("Producto", back_populates="conversiones")

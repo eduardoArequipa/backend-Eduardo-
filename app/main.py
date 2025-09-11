@@ -96,8 +96,9 @@ async def add_product_to_web_queue_sales(
             "producto_id": db_producto.producto_id,
             "codigo": db_producto.codigo,
             "nombre": db_producto.nombre,
-            "precio_venta": float(db_producto.precio_venta), # Precio de venta para el escáner de ventas
-            "stock": db_producto.stock,
+            "precio_venta": float(db_producto.precio_venta),
+            "stock": float(db_producto.stock),  # ✅ Agregar conversión a float
+
             "quantity": 1
             
         }
@@ -123,8 +124,9 @@ async def add_product_to_web_queue_purchases(
             "producto_id": db_producto.producto_id,
             "codigo": db_producto.codigo,
             "nombre": db_producto.nombre,
-            "precio_compra": float(db_producto.precio_compra), # Precio de compra para el escáner de compras
-            "stock": db_producto.stock,
+            "precio_compra": float(db_producto.precio_compra),
+            "stock": float(db_producto.stock),  # ✅ Agregar conversión a float
+
             "quantity": 1
         }
     }

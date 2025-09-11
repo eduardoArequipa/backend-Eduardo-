@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.realpath(os.path.join(os.path.dirname(__file__), '..'
 # Importa todos los modelos para que Base los conozca
 # Asegúrate de que todos tus modelos estén importados en app/models/__init__.py
 # o impórtalos explícitamente aquí.
-from app.models import categoria, compra, detalle_compra, detalle_venta, devoluciones, empresa, enums, marca, menu, metodo_pago, movimiento, persona_rol, persona, producto, proveedor, rol_menu, rol, unidad_medida, usuario, venta
+from app.models import categoria, compra, detalle_compra, detalle_venta, empresa, enums, marca, menu, metodo_pago, movimiento, persona_rol, persona, producto, proveedor, rol_menu, rol, unidad_medida, usuario, venta, conversion, factura_electronica
 
 # Ahora Alembic puede encontrar los metadatos de tus modelos
 target_metadata = Base.metadata

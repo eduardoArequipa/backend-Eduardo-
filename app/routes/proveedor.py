@@ -356,6 +356,22 @@ def delete_proveedor(
     # Implementar Soft Delete: cambiar el estado
     db_proveedor.estado = EstadoEnum.inactivo
 
+    # 🔄 SINCRONIZACIÓN AUTOMÁTICA: Desactivar persona relacionada si es de tipo persona
+    if db_proveedor.persona_id:
+        # Cargar la persona relacionada
+        db_persona = db.query(DBPersona).filter(
+            DBPersona.persona_id == db_proveedor.persona_id
+        ).first()
+        
+        if db_persona and db_persona.estado == EstadoEnum.activo:
+            db_persona.estado = EstadoEnum.inactivo
+            print(f"🔄 Sincronización: Desactivando persona ID {db_persona.persona_id} asociada a proveedor ID {proveedor_id}")
+            
+            # Si la persona tiene un usuario asociado, también lo desactivamos
+            if db_persona.usuario and db_persona.usuario.estado == EstadoEnum.activo:
+                db_persona.usuario.estado = EstadoEnum.inactivo
+                print(f"🔄 Sincronización: Desactivando usuario ID {db_persona.usuario.usuario_id} asociado a persona ID {db_persona.persona_id}")
+
     # Si tu modelo Proveedor tuviera campo modificado_por, lo asignarías aquí:
     # db_proveedor.modificado_por = current_user.usuario_id
 
@@ -387,6 +403,22 @@ def activate_proveedor(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El proveedor ya está activo.")
 
     db_proveedor.estado = EstadoEnum.activo
+
+    # 🔄 SINCRONIZACIÓN AUTOMÁTICA: Activar persona relacionada si es de tipo persona
+    if db_proveedor.persona_id:
+        # Cargar la persona relacionada
+        db_persona = db.query(DBPersona).filter(
+            DBPersona.persona_id == db_proveedor.persona_id
+        ).first()
+        
+        if db_persona and db_persona.estado == EstadoEnum.inactivo:
+            db_persona.estado = EstadoEnum.activo
+            print(f"🔄 Sincronización: Activando persona ID {db_persona.persona_id} asociada a proveedor ID {proveedor_id}")
+            
+            # Activar usuario asociado si existe y está inactivo
+            if db_persona.usuario and db_persona.usuario.estado == EstadoEnum.inactivo:
+                db_persona.usuario.estado = EstadoEnum.activo
+                print(f"🔄 Sincronización: Activando usuario ID {db_persona.usuario.usuario_id} asociado a persona ID {db_persona.persona_id}")
 
     # Si tu modelo Proveedor tuviera campo modificado_por, lo asignarías aquí:
     # db_proveedor.modificado_por = current_user.usuario_id

@@ -18,3 +18,7 @@ class EstadoCompraEnum(str, Enum):
 class EstadoVentaEnum(str, Enum):
      activa = "activa"
      anulada = "anulada"
+
+class TipoMargenEnum(str, Enum):
+    porcentaje = "porcentaje"
+    fijo = "fijo"

@@ -123,9 +123,20 @@ def update_rol(
                 detail=f"Ya existe otro rol con el nombre '{rol_data.nombre_rol}'"
             )
     
+    # ✅ VALIDACIÓN AÑADIDA: No permitir desactivar roles asignados
+    update_data = rol_data.model_dump(exclude_unset=True)
+    
+    # Si se está intentando desactivar el rol, verificar que no esté asignado
+    if 'estado' in update_data and update_data['estado'] == EstadoEnum.inactivo and db_rol.estado == EstadoEnum.activo:
+        personas_con_rol = db.query(DBPersonaRol).filter(DBPersonaRol.rol_id == rol_id).count()
+        if personas_con_rol > 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"No se puede desactivar el rol '{db_rol.nombre_rol}' porque está asignado a {personas_con_rol} persona(s). Primero remueve el rol de todas las personas."
+            )
+    
     try:
         # Actualizar campos proporcionados
-        update_data = rol_data.model_dump(exclude_unset=True)
         for key, value in update_data.items():
             setattr(db_rol, key, value)
         

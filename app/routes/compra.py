@@ -21,7 +21,8 @@ from ..models.persona import Persona as DBPersona
 from ..models.empresa import Empresa as DBEmpresa
 from ..models.enums import EstadoCompraEnum , EstadoEnum
 from ..models.conversion import Conversion as DBConversion
-
+# Importar el servicio de precios
+from ..services.precio_service import PrecioService
 
 
 from ..schemas.compra import (
@@ -514,18 +515,21 @@ def completar_compra(
             
             # 3. Actualizar el stock del producto (Corregido a 'stock')
             db_producto.stock = (db_producto.stock or Decimal(0)) + stock_to_add
-            
-            # 4. Actualizar el precio de compra del producto al último costo calculado
-            db_producto.precio_compra = nuevo_precio_compra_unitario
 
             # --- FIN DE LA NUEVA LÓGICA ---
 
             db.add(db_producto)
 
+        # Cambiar estado de compra a completada
         db_compra.estado = EstadoCompraEnum.completada
         db_compra.modificado_por = current_user.usuario_id 
 
-        db.commit() 
+        # Hacer commit de los cambios de stock primero
+        db.commit()
+        
+        # Ahora actualizar precios usando el servicio (que recalcula promedio ponderado)
+        PrecioService.actualizar_precios_por_compra(db, compra_id)
+        
         db.refresh(db_compra)
 
         return db_compra

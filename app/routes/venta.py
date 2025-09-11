@@ -192,7 +192,8 @@ def read_ventas(
     skip: int = Query(0, ge=0), 
     limit: int = Query(10, gt=0),
     db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/ventas"))
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_authenticated_user)
+    #current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/ventas"))
 ):
     """
     Obtiene una lista paginada de ventas con opciones de filtrado y búsqueda.

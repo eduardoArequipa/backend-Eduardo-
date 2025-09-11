@@ -249,7 +249,21 @@ def activate_persona(
     """
     if db_persona.estado == EstadoEnum.activo:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La persona ya está activa.")
+    
     db_persona.estado = EstadoEnum.activo
+    
+    # 🔄 SINCRONIZACIÓN AUTOMÁTICA: Activar proveedores relacionados inactivos
+    from ..models.proveedor import Proveedor as DBProveedor
+    proveedores_relacionados = db.query(DBProveedor).filter(
+        DBProveedor.persona_id == db_persona.persona_id,
+        DBProveedor.estado == EstadoEnum.inactivo
+    ).all()
+    
+    # Activar todos los proveedores inactivos relacionados con esta persona
+    for proveedor in proveedores_relacionados:
+        proveedor.estado = EstadoEnum.activo
+        print(f"🔄 Sincronización: Activando proveedor ID {proveedor.proveedor_id} asociado a persona ID {db_persona.persona_id}")
+    
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -281,6 +295,18 @@ def deactivate_persona(
     # Si la persona tiene un usuario asociado, también lo desactivamos.
     if db_persona.usuario:
         db_persona.usuario.estado = EstadoEnum.inactivo
+    
+    # 🔄 SINCRONIZACIÓN AUTOMÁTICA: Desactivar proveedores relacionados
+    from ..models.proveedor import Proveedor as DBProveedor
+    proveedores_relacionados = db.query(DBProveedor).filter(
+        DBProveedor.persona_id == db_persona.persona_id,
+        DBProveedor.estado == EstadoEnum.activo
+    ).all()
+    
+    # Desactivar todos los proveedores activos relacionados con esta persona
+    for proveedor in proveedores_relacionados:
+        proveedor.estado = EstadoEnum.inactivo
+        print(f"🔄 Sincronización: Desactivando proveedor ID {proveedor.proveedor_id} asociado a persona ID {db_persona.persona_id}")
     
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

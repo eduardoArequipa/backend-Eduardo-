@@ -5,7 +5,7 @@ from .categoria import CategoriaNested
 from .usuario import UsuarioAudit
 from .unidad_medida import UnidadMedidaNested
 from .marca import MarcaNested
-from ..models.enums import EstadoEnum
+from ..models.enums import EstadoEnum, TipoMargenEnum
 from .pagination import Pagination
 
 # --- Nuevos esquemas para Conversiones de Compra ---
@@ -15,6 +15,7 @@ class ConversionBase(BaseModel):
     unidades_por_presentacion: Decimal
     es_para_compra: bool
     es_para_venta: bool
+    descripcion_detallada: Optional[str] = None
 
     model_config = ConfigDict(json_encoders={Decimal: str})
 
@@ -40,6 +41,9 @@ class ProductoBase(BaseModel):
     unidad_inventario_id: int  # Renombrado
     marca_id: int
     unidad_compra_predeterminada: Optional[str] = None # Nuevo
+    tipo_margen: Optional[TipoMargenEnum] = TipoMargenEnum.porcentaje
+    margen_valor: Optional[Decimal] = Decimal('30.0')
+    precio_manual_activo: Optional[bool] = False
 
 class ProductoCreate(ProductoBase):
     imagen_ruta: Optional[str] = None
@@ -59,6 +63,24 @@ class ProductoUpdate(ProductoBase):
     unidad_inventario_id: Optional[int] = None # Renombrado
     marca_id: Optional[int] = None
     unidad_compra_predeterminada: Optional[str] = None # Nuevo
+    tipo_margen: Optional[TipoMargenEnum] = None
+    margen_valor: Optional[Decimal] = None
+    precio_manual_activo: Optional[bool] = None
+
+class DesglosePresentacion(BaseModel):
+    """Una presentación del desglose de stock"""
+    nombre: str
+    cantidad: int
+    abreviatura: str
+
+class StockConvertido(BaseModel):
+    """Información del stock convertido a unidad de venta preferida"""
+    cantidad: Decimal
+    unidad_nombre: str
+    unidad_abreviatura: str
+    es_aproximado: bool = False  # Si la conversión no es exacta
+    
+    model_config = ConfigDict(json_encoders={Decimal: str})
 
 class Producto(ProductoBase):
     producto_id: int
@@ -77,6 +99,11 @@ class Producto(ProductoBase):
     
     # Nueva relación anidada
     conversiones: List[Conversion] = []
+    
+    # Nuevo campo calculado para stock en unidad de venta preferida
+    stock_convertido: Optional[StockConvertido] = None
+    # Nuevo campo para el desglose detallado
+    stock_desglosado: Optional[List[DesglosePresentacion]] = None
 
     model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: str})
 
@@ -101,6 +128,23 @@ class ProductoCompra(BaseModel):
     stock: Decimal # Ahora es Decimal
 
     model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: str})
+
+# Esquema para calcular precios sugeridos
+class PrecioSugeridoRequest(BaseModel):
+    precio_compra: Decimal
+    tipo_margen: TipoMargenEnum
+    margen_valor: Decimal
+
+    model_config = ConfigDict(json_encoders={Decimal: str})
+
+class PrecioSugeridoResponse(BaseModel):
+    precio_compra: Decimal
+    precio_venta_sugerido: Decimal
+    tipo_margen: TipoMargenEnum
+    margen_valor: Decimal
+    margen_aplicado: Decimal  # Monto real del margen aplicado
+
+    model_config = ConfigDict(json_encoders={Decimal: str})
 
 class ProductoPagination(Pagination[Producto]):
     """Esquema para la respuesta paginada de productos."""

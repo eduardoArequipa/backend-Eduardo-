@@ -17,6 +17,10 @@ from ..models.conversion import Conversion as DBConversion
 # 1. Importar modelos de detalles para la comprobación
 from ..models.detalle_venta import DetalleVenta
 from ..models.detalle_compra import DetalleCompra
+# Importar el servicio de precios
+from ..services.precio_service import PrecioService
+# Importar utilidades de stock
+from ..utils.stock_utils import calcular_stock_convertido, calcular_stock_desglosado
 from ..schemas.producto import (
     Producto,
     ProductoCreate,
@@ -24,7 +28,9 @@ from ..schemas.producto import (
     ProductoPagination,
     ProductoNested,
     Conversion,
-    ConversionCreate
+    ConversionCreate,
+    PrecioSugeridoRequest,
+    PrecioSugeridoResponse
 )
 
 UPLOAD_DIR_PRODUCTS = "static/uploads/products"
@@ -40,6 +46,40 @@ def delete_image_file(image_path: Optional[str]):
                     os.remove(file_to_delete_relative)
         except Exception as e:
             pass
+
+def agregar_stock_convertido(producto: DBProducto) -> dict:
+    """
+    Convierte un producto de base de datos a diccionario con stock convertido.
+    """
+    producto_dict = {
+        "producto_id": producto.producto_id,
+        "codigo": producto.codigo,
+        "nombre": producto.nombre,
+        "precio_compra": producto.precio_compra,
+        "precio_venta": producto.precio_venta,
+        "stock": producto.stock,
+        "stock_minimo": producto.stock_minimo,
+        "categoria_id": producto.categoria_id,
+        "unidad_inventario_id": producto.unidad_inventario_id,
+        "marca_id": producto.marca_id,
+        "unidad_compra_predeterminada": producto.unidad_compra_predeterminada,
+        "tipo_margen": producto.tipo_margen,
+        "margen_valor": producto.margen_valor,
+        "precio_manual_activo": producto.precio_manual_activo,
+        "imagen_ruta": producto.imagen_ruta,
+        "estado": producto.estado,
+        "creado_por": producto.creado_por,
+        "modificado_por": producto.modificado_por,
+        "categoria": producto.categoria,
+        "creador": producto.creador,
+        "modificador": producto.modificador,
+        "unidad_inventario": producto.unidad_inventario,
+        "marca": producto.marca,
+        "conversiones": producto.conversiones,
+        "stock_convertido": calcular_stock_convertido(producto),
+        "stock_desglosado": calcular_stock_desglosado(producto)
+    }
+    return producto_dict
                     
 
 router = APIRouter(
@@ -71,6 +111,9 @@ def create_producto(
 
     new_producto = DBProducto(**producto.model_dump())
     new_producto.creado_por = current_user.usuario_id
+    
+    # Calcular precio de venta inicial basado en el margen configurado
+    new_producto.actualizar_precio_venta_automatico()
 
     db.add(new_producto)
     db.commit()
@@ -125,8 +168,14 @@ def read_productos(
 
     total = query.count()
     productos = query.offset(skip).limit(limit).all()
+    
+    # Agregar stock convertido a cada producto
+    productos_con_stock_convertido = []
+    for producto in productos:
+        producto_dict = agregar_stock_convertido(producto)
+        productos_con_stock_convertido.append(producto_dict)
 
-    return {"items": productos, "total": total}
+    return {"items": productos_con_stock_convertido, "total": total}
 
 
 @router.get("/low-stock", response_model=List[Producto])
@@ -165,7 +214,7 @@ def read_producto(
     if producto is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Producto no encontrado")
 
-    return producto
+    return agregar_stock_convertido(producto)
 
 @router.put("/{producto_id}", response_model=Producto)
 def update_producto(
@@ -216,10 +265,29 @@ def update_producto(
         if db_marca is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La nueva Marca especificada no fue encontrada.")
 
+    # Validar precio de venta si se actualiza manualmente
+    if 'precio_venta' in update_data and 'precio_manual_activo' not in update_data:
+        # Si se actualiza el precio de venta directamente, activar modo manual
+        update_data['precio_manual_activo'] = True
+    
+    # Validar que el precio de venta no sea menor al de compra
+    precio_venta_nuevo = update_data.get('precio_venta', db_producto.precio_venta)
+    precio_compra_nuevo = update_data.get('precio_compra', db_producto.precio_compra)
+    
+    if not PrecioService.validar_precio_venta_minimo(precio_compra_nuevo, precio_venta_nuevo):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, 
+            detail=f"El precio de venta ({precio_venta_nuevo}) no puede ser menor al precio de compra ({precio_compra_nuevo})"
+        )
+
     for field, value in update_data.items():
         setattr(db_producto, field, value)
 
     db_producto.modificado_por = current_user.usuario_id
+    
+    # Recalcular precio de venta si cambió el precio de compra o configuración de margen
+    if any(field in update_data for field in ['precio_compra', 'tipo_margen', 'margen_valor', 'precio_manual_activo']):
+        db_producto.actualizar_precio_venta_automatico()
 
     db.commit()
     db.refresh(db_producto, attribute_names=['categoria', 'creador', 'modificador', 'unidad_inventario', 'marca', 'conversiones'])
@@ -269,10 +337,6 @@ def delete_producto(
 
     db_producto.estado = EstadoEnum.inactivo
     db_producto.modificado_por = current_user.usuario_id
-
-    if db_producto.imagen_ruta:
-        delete_image_file(db_producto.imagen_ruta)
-        db_producto.imagen_ruta = None
 
     db.commit()
 
@@ -426,3 +490,32 @@ def delete_conversion(
     db.delete(db_conversion)
     db.commit()
     return {}
+
+@router.post("/calcular-precio-sugerido", response_model=PrecioSugeridoResponse)
+def calcular_precio_sugerido(
+    request: PrecioSugeridoRequest,
+    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user)
+):
+    """
+    Calcula el precio de venta sugerido basado en un precio de compra y margen dados.
+    Útil para previsualizaciones en el frontend.
+    """
+    precio_venta_sugerido = PrecioService.calcular_precio_venta_sugerido(
+        precio_compra=request.precio_compra,
+        tipo_margen=request.tipo_margen.value,
+        margen_valor=request.margen_valor
+    )
+    
+    # Calcular el margen aplicado en términos absolutos
+    if request.tipo_margen.value == "porcentaje":
+        margen_aplicado = request.precio_compra * (request.margen_valor / 100)
+    else:  # fijo
+        margen_aplicado = request.margen_valor
+    
+    return PrecioSugeridoResponse(
+        precio_compra=request.precio_compra,
+        precio_venta_sugerido=precio_venta_sugerido,
+        tipo_margen=request.tipo_margen,
+        margen_valor=request.margen_valor,
+        margen_aplicado=margen_aplicado
+    )
