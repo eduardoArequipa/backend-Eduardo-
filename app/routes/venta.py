@@ -1,7 +1,7 @@
 from typing import List, Optional
 from datetime import datetime
 from decimal import Decimal
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Path
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Path, Request
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
 
@@ -18,6 +18,7 @@ from ..schemas.producto import Producto
 # Importar los esquemas actualizados
 from ..schemas.venta import Venta, VentaCreate, ProductoSchemaBase, VentaPagination
 from ..services.facturacion_service import crear_factura_tesabiz
+from ..services.audit_service import AuditService
 
 router = APIRouter(
     prefix="/ventas",
@@ -113,6 +114,7 @@ def get_producto_by_codigo(
 @router.post("/", response_model=Venta, status_code=status.HTTP_201_CREATED)
 async def create_venta(
     venta_data: VentaCreate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/ventas"))
 ):
@@ -157,6 +159,16 @@ async def create_venta(
         db.commit()
         db.refresh(nueva_venta)
 
+        # Log de auditoría para creación de venta
+        AuditService.log_create(
+            db=db,
+            tabla="ventas",
+            registro_id=nueva_venta.venta_id,
+            valores_despues=AuditService.serialize_model(nueva_venta),
+            usuario_id=current_user.usuario_id,
+            request=request
+        )
+
         # --- Lógica de Facturación Condicional ---
         if venta_data.solicitar_factura:
             if not venta_data.persona_id:
@@ -169,7 +181,7 @@ async def create_venta(
             except Exception as e:
                 # La venta se creó, pero la facturación falló. Se registra el error pero no se anula la transacción.
                 print(f"ALERTA: La venta {nueva_venta.venta_id} se creó exitosamente, pero falló la facturación electrónica: {e}")
-        
+
         return get_venta_or_404(nueva_venta.venta_id, db)
 
     except HTTPException:
@@ -242,6 +254,7 @@ def get_venta(
 
 @router.patch("/{venta_id}/anular", response_model=Venta)
 def anular_venta(
+    request: Request,
     db_venta: DBVenta = Depends(get_venta_or_404),
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/ventas"))
@@ -252,7 +265,15 @@ def anular_venta(
     """
     if db_venta.estado == EstadoVentaEnum.anulada:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La venta ya está anulada.")
-    
+
+    # Capturar valores antes para audit log
+    valores_antes = {
+        "estado": db_venta.estado.value,
+        "total": float(db_venta.total),
+        "persona_id": db_venta.persona_id,
+        "metodo_pago_id": db_venta.metodo_pago_id
+    }
+
     db.begin_nested()
     try:
         # Precargar productos y sus conversiones para eficiencia
@@ -291,6 +312,18 @@ def anular_venta(
 
         db.commit()
         db.refresh(db_venta)
+
+        # Log de auditoría para anulación de venta
+        AuditService.log_update(
+            db=db,
+            tabla="ventas",
+            registro_id=db_venta.venta_id,
+            valores_antes=valores_antes,
+            valores_despues=AuditService.serialize_model(db_venta),
+            usuario_id=current_user.usuario_id,
+            request=request
+        )
+
         return get_venta_or_404(db_venta.venta_id, db)
         
     except Exception as e:

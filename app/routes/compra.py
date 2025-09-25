@@ -1,9 +1,9 @@
 # backEnd/app/routes/compra.py
 
 from typing import List, Optional, Union
-from datetime import datetime, timezone 
+from datetime import datetime, timezone
 from decimal import Decimal
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, and_
 import os
@@ -23,6 +23,7 @@ from ..models.enums import EstadoCompraEnum , EstadoEnum
 from ..models.conversion import Conversion as DBConversion
 # Importar el servicio de precios
 from ..services.precio_service import PrecioService
+from ..services.audit_service import AuditService
 
 
 from ..schemas.compra import (
@@ -136,6 +137,7 @@ def notify_proveedor(db: Session, compra_id: int, proveedor_id: int, total: Deci
 @router.post("/", response_model=Compra, status_code=status.HTTP_201_CREATED)
 def create_compra(
     compra_data: CompraCreate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/compras"))
 ):
@@ -208,6 +210,16 @@ def create_compra(
         db.add(nueva_compra)
         db.commit()
         db.refresh(nueva_compra)
+
+        # Log de auditoría para creación de compra
+        AuditService.log_create(
+            db=db,
+            tabla="compras",
+            registro_id=nueva_compra.compra_id,
+            valores_despues=AuditService.serialize_model(nueva_compra),
+            usuario_id=current_user.usuario_id,
+            request=request
+        )
 
         try:
             notify_proveedor(db, nueva_compra.compra_id, nueva_compra.proveedor_id, nueva_compra.total)
@@ -330,6 +342,7 @@ def read_compra(
 def update_compra(
     compra_id: int,
     compra_update: CompraUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/compras"))
 ):
@@ -349,6 +362,15 @@ def update_compra(
 
         if db_compra.estado != EstadoCompraEnum.pendiente:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Solo se pueden modificar compras en estado 'pendiente'. Estado actual: '{db_compra.estado.value}'.")
+
+        # Capturar valores antes para audit log
+        valores_antes = {
+            "proveedor_id": db_compra.proveedor_id,
+            "fecha_compra": db_compra.fecha_compra.isoformat() if db_compra.fecha_compra else None,
+            "total": float(db_compra.total),
+            "estado": db_compra.estado.value,
+            "detalles_count": len(db_compra.detalles)
+        }
 
         update_data = compra_update.model_dump(exclude_unset=True, exclude={'detalles'})
 
@@ -400,6 +422,18 @@ def update_compra(
         db_compra.modificado_por = current_user.usuario_id
         db.commit()
         db.refresh(db_compra)
+
+        # Log de auditoría para actualización de compra
+        AuditService.log_update(
+            db=db,
+            tabla="compras",
+            registro_id=db_compra.compra_id,
+            valores_antes=valores_antes,
+            valores_despues=AuditService.serialize_model(db_compra),
+            usuario_id=current_user.usuario_id,
+            request=request
+        )
+
         return db_compra
 
     except HTTPException as e:
@@ -413,6 +447,7 @@ def update_compra(
 @router.patch("/{compra_id}/anular", response_model=Compra)
 def anular_compra(
     compra_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/compras"))
 ):
@@ -431,14 +466,32 @@ def anular_compra(
     if db_compra.estado == EstadoCompraEnum.completada:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No se puede anular una compra que ya fue completada. Se debe gestionar una devolución.")
 
+    # Capturar valores antes para audit log
+    valores_antes = {
+        "estado": db_compra.estado.value,
+        "total": float(db_compra.total),
+        "proveedor_id": db_compra.proveedor_id
+    }
+
     try:
-        db.begin_nested() 
+        db.begin_nested()
 
         db_compra.estado = EstadoCompraEnum.anulada
-        db_compra.modificado_por = current_user.usuario_id 
+        db_compra.modificado_por = current_user.usuario_id
 
         db.commit()
         db.refresh(db_compra)
+
+        # Log de auditoría para anulación de compra
+        AuditService.log_update(
+            db=db,
+            tabla="compras",
+            registro_id=db_compra.compra_id,
+            valores_antes=valores_antes,
+            valores_despues=AuditService.serialize_model(db_compra),
+            usuario_id=current_user.usuario_id,
+            request=request
+        )
 
         return db_compra 
 
@@ -454,6 +507,7 @@ def anular_compra(
 @router.patch("/{compra_id}/completar", response_model=Compra)
 def completar_compra(
     compra_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/compras"))
 ):
@@ -472,6 +526,12 @@ def completar_compra(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La compra ya está completada.")
     if db_compra.estado == EstadoCompraEnum.anulada:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No se puede completar una compra anulada.")
+
+    # Capturar valores antes para audit log
+    valores_antes = {
+        "estado": db_compra.estado.value,
+        "total": float(db_compra.total)
+    }
 
     try:
         db.begin_nested()
@@ -529,8 +589,19 @@ def completar_compra(
         
         # Ahora actualizar precios usando el servicio (que recalcula promedio ponderado)
         PrecioService.actualizar_precios_por_compra(db, compra_id)
-        
+
         db.refresh(db_compra)
+
+        # Log de auditoría para completar compra
+        AuditService.log_update(
+            db=db,
+            tabla="compras",
+            registro_id=db_compra.compra_id,
+            valores_antes=valores_antes,
+            valores_despues=AuditService.serialize_model(db_compra),
+            usuario_id=current_user.usuario_id,
+            request=request
+        )
 
         return db_compra
 

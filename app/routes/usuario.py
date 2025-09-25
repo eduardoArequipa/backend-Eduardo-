@@ -31,7 +31,8 @@ def get_usuario_or_404(
     # Cargamos eager loading para las relaciones clave: Usuario.persona y Persona.roles
     usuario = db.query(DBUsuario).options(
         joinedload(DBUsuario.persona).joinedload(DBPersona.roles), # CORRECCIÓN: Los roles están en Persona
-        joinedload(DBUsuario.creador)  # Carga el Usuario que lo creó (para auditoría)
+        joinedload(DBUsuario.creador),  # Carga el Usuario que lo creó (para auditoría)
+        joinedload(DBUsuario.modificador)  # Carga el Usuario que lo modificó (para auditoría)
     ).filter(DBUsuario.usuario_id == usuario_id).first()
 
     if usuario is None:
@@ -193,7 +194,10 @@ def update_usuario(
     # Aplicar el resto de los cambios
     for field, value in update_data.items():
         setattr(db_usuario, field, value)
-    
+
+    # Establecer quien modificó el usuario
+    db_usuario.modificado_por = current_user.usuario_id
+
     db.commit()
     db.refresh(db_usuario) # Refrescar para cargar las relaciones actualizadas
     return db_usuario

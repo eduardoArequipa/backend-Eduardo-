@@ -7,6 +7,7 @@ from .menu import MenuInDB
 
 # --- Esquema base para Rol ---
 class RolBase(BaseModel):
+    rol_id: int
     nombre_rol: str = Field(..., min_length=3, max_length=50, description="Nombre único del rol")
     descripcion: Optional[str] = Field(None, description="Descripción detallada del rol")
     estado: Optional[EstadoEnum] = EstadoEnum.activo

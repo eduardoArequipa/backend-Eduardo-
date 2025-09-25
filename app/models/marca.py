@@ -1,8 +1,9 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime
+from sqlalchemy import Column, Integer, String, Text, DateTime, Enum
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func # Para CURRENT_TIMESTAMP
 
 from .base import Base
+from .enums import EstadoEnum
 
 class Marca(Base):
     __tablename__ = "marcas"
@@ -11,7 +12,7 @@ class Marca(Base):
     nombre_marca = Column(String(50), unique=True, nullable=False)
     descripcion = Column(Text, nullable=True)
     pais_origen = Column(String(50), nullable=True)
-    estado = Column(String(20), default='activo') # O puedes usar un Enum
+    estado = Column(Enum(EstadoEnum), default=EstadoEnum.activo, nullable=False)
     creado_en = Column(DateTime, default=func.now())
 
     # Relación inversa con Producto

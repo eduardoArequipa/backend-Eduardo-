@@ -10,7 +10,7 @@ class UnidadMedida(Base):
     unidad_id = Column(Integer, primary_key=True, index=True)
     nombre_unidad = Column(String(20), unique=True, nullable=False)
     abreviatura = Column(String(5), nullable=False)
-    es_fraccionable = Column(Boolean, default=False)
+    es_fraccionable = Column(Boolean, default=False)  # Permite cantidades decimales como 0.5, 1.25
     descripcion = Column(Text, nullable=True)
     estado = Column(String(20), default='activo') # O puedes usar un Enum si lo tienes para estados generales
     creado_en = Column(DateTime, default=func.now())

@@ -47,7 +47,7 @@ class ProductoBase(BaseModel):
 
 class ProductoCreate(ProductoBase):
     imagen_ruta: Optional[str] = None
-    stock: Optional[Decimal] = Decimal('0.0') # Ahora es Decimal
+    stock: Optional[Decimal] = Decimal('0.0') # Stock decimal para fracciones
     estado: Optional[EstadoEnum] = EstadoEnum.activo
 
 class ProductoUpdate(ProductoBase):
@@ -55,7 +55,7 @@ class ProductoUpdate(ProductoBase):
     nombre: Optional[str] = None
     precio_compra: Optional[Decimal] = None
     precio_venta: Optional[Decimal] = None
-    stock: Optional[Decimal] = None  # Ahora es Decimal
+    stock: Optional[Decimal] = None  # Stock decimal para fracciones
     stock_minimo: Optional[int] = None
     categoria_id: Optional[int] = None
     imagen_ruta: Optional[str] = None
@@ -70,8 +70,10 @@ class ProductoUpdate(ProductoBase):
 class DesglosePresentacion(BaseModel):
     """Una presentación del desglose de stock"""
     nombre: str
-    cantidad: int
+    cantidad: Decimal  # Cambiar a Decimal para soportar fracciones
     abreviatura: str
+
+    model_config = ConfigDict(json_encoders={Decimal: str})
 
 class StockConvertido(BaseModel):
     """Información del stock convertido a unidad de venta preferida"""
@@ -85,7 +87,7 @@ class StockConvertido(BaseModel):
 class Producto(ProductoBase):
     producto_id: int
     imagen_ruta: Optional[str] = None
-    stock: Decimal # Ahora es Decimal
+    stock: Decimal # Stock decimal para fracciones
     estado: EstadoEnum
     creado_por: Optional[int] = None
     modificado_por: Optional[int] = None
@@ -113,7 +115,7 @@ class ProductoNested(BaseModel):
     nombre: str
     precio_venta: Decimal
     imagen_ruta: Optional[str] = None
-    stock: Decimal # Ahora es Decimal
+    stock: Decimal # Stock decimal para fracciones
     unidad_inventario: UnidadMedidaNested # Para mostrar la unidad base
 
     model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: str})
@@ -125,7 +127,7 @@ class ProductoCompra(BaseModel):
     nombre: str
     precio_compra: Decimal
     imagen_ruta: Optional[str] = None
-    stock: Decimal # Ahora es Decimal
+    stock: Decimal # Stock decimal para fracciones
 
     model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: str})
 

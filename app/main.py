@@ -9,9 +9,9 @@ from sqlalchemy.orm import Session
 from app.models.base import Base
 from app.database import engine, get_db
 from app.routes import (
-    auth, usuario, rol, categoria, persona, producto, proveedor, 
-    empresa, compra, venta, metodo_pago, marca, 
-    unidad_medida, dashboard, uploads, movimiento, reportes,menu, factura
+    auth, usuario, rol, categoria, persona, producto, proveedor,
+    empresa, compra, venta, metodo_pago, marca,
+    unidad_medida, dashboard, uploads, movimiento, reportes, menu, factura, audit_logs
 )
 from app.models.producto import Producto as DBProducto
 
@@ -156,3 +156,4 @@ app.include_router(venta.router) # Para /ventas
 app.include_router(venta.router_productos_public) # Para /productos/buscar_por_codigo
 # app.include_router(conversiones_compra.router) # Removed as it's now handled in producto.py
 app.include_router(factura.router)
+app.include_router(audit_logs.router)

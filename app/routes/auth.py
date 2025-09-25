@@ -3,7 +3,7 @@
 from datetime import timedelta, datetime, timezone
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field, EmailStr
 from sqlalchemy.orm import Session, joinedload # Importar joinedload para cargar relaciones
@@ -18,6 +18,7 @@ from ..models.usuario import Usuario # Asegúrate de importar el modelo Usuario 
 from ..models.menu import Menu as DBMenu
 from ..models.rol import Rol as DBRol # Importar Rol
 from ..models.enums import EstadoEnum # Asegúrate de que EstadoEnum esté importado correctamente
+from ..services.audit_service import AuditService
 
 router = APIRouter(
     prefix="/auth",
@@ -47,6 +48,7 @@ def make_datetime_utc_aware(dt: Optional[datetime]) -> Optional[datetime]:
 # Endpoint de login usando form-data
 @router.post("/login", response_model=Token)
 def login_for_access_token(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
@@ -64,6 +66,19 @@ def login_for_access_token(
 
     if not user:
         print(f"DEBUG: Usuario '{form_data.username}' no encontrado.")
+        # Log de intento de login con usuario inexistente
+        AuditService.log_action(
+            db=db,
+            tabla="usuarios",
+            accion="LOGIN_FAILED",
+            valores_despues={
+                "usuario_intentado": form_data.username,
+                "resultado": "usuario_inexistente",
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            },
+            request=request,
+            descripcion=f"Intento de login con usuario inexistente: {form_data.username}"
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Credenciales inválidas",
@@ -125,6 +140,22 @@ def login_for_access_token(
                     detail="Error interno del servidor al bloquear el usuario."
                 )
 
+        # Log de login fallido por contraseña incorrecta
+        AuditService.log_action(
+            db=db,
+            tabla="usuarios",
+            accion="LOGIN_FAILED",
+            usuario_id=user.usuario_id,
+            registro_id=user.usuario_id,
+            valores_despues={
+                "usuario": user.nombre_usuario,
+                "resultado": "contraseña_incorrecta",
+                "intentos_fallidos": user.intentos_fallidos,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            },
+            request=request,
+            descripcion=f"Login fallido: contraseña incorrecta para {user.nombre_usuario}"
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Credenciales inválidas",
@@ -164,6 +195,14 @@ def login_for_access_token(
         data={"sub": user.nombre_usuario, "roles": user_roles},
         expires_delta=access_token_expires
     )
+    # Log de login exitoso
+    AuditService.log_login(
+        db=db,
+        usuario_id=user.usuario_id,
+        request=request,
+        success=True
+    )
+
     print("DEBUG: Token de acceso generado exitosamente.")
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -189,6 +228,64 @@ def read_user_menus(
     print(f"[DEBUG BACKEND] Usuario '{current_user.nombre_usuario}' tiene acceso a {len(sorted_menus)} menús: {[menu.nombre for menu in sorted_menus]}")
     
     return sorted_menus
+
+@router.get("/me/menus-with-roles")
+def read_user_menus_with_roles(
+    db: Session = Depends(get_db),
+    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user)
+):
+    """
+    Obtiene la lista de menús con información de roles para filtrado dinámico.
+    Devuelve todos los menús accesibles con la relación rol_menu incluida.
+    """
+    if not current_user.persona or not current_user.persona.roles:
+        return []
+
+    # Obtener todos los IDs de roles del usuario
+    user_role_ids = [rol.rol_id for rol in current_user.persona.roles]
+
+    # Buscar todos los menús que tienen relación con estos roles
+    from ..models.menu import Menu
+    from ..models.rol_menu import RolMenu
+    from ..models.rol import Rol
+    from sqlalchemy.orm import joinedload
+
+    # Query que trae menús con sus relaciones rol_menus precargadas
+    menus_query = db.query(Menu).options(
+        joinedload(Menu.rol_menus).joinedload(RolMenu.rol)
+    ).join(RolMenu, Menu.menu_id == RolMenu.menu_id).filter(
+        RolMenu.rol_id.in_(user_role_ids)
+    ).distinct()
+
+    menus = menus_query.all()
+
+    # Convertir a diccionarios serializables
+    result = []
+    for menu in menus:
+        menu_dict = {
+            "menu_id": menu.menu_id,
+            "nombre": menu.nombre,
+            "ruta": menu.ruta,
+            "descripcion": menu.descripcion,
+            "icono": menu.icono,
+            "rol_menu": [
+                {
+                    "rol": {
+                        "rol_id": rm.rol.rol_id,
+                        "nombre_rol": rm.rol.nombre_rol
+                    }
+                }
+                for rm in menu.rol_menus
+            ]
+        }
+        result.append(menu_dict)
+
+    # Ordenar por menu_id
+    result.sort(key=lambda m: m["menu_id"])
+
+    print(f"[DEBUG] Usuario '{current_user.nombre_usuario}' - Menús con roles: {len(result)}")
+
+    return result
 
 # Endpoint para solicitar un código de recuperación de contraseña
 @router.post("/forgot-password-request", status_code=status.HTTP_200_OK)

@@ -74,14 +74,18 @@ class UsuarioReadAudit(BaseModel):
     intentos_fallidos: int
     bloqueado_hasta: Optional[datetime] = None
     creado_por: Optional[int] = None
+    modificado_por: Optional[int] = None
     codigo_recuperacion: Optional[str] = None
     expiracion_codigo_recuperacion: Optional[datetime] = None
 
-    persona: Optional[PersonaBase] = None # Esto es crucial
+    # Campos de auditoría en español
+    fecha_creacion: Optional[datetime] = None
+    fecha_modificacion: Optional[datetime] = None
 
+    persona: Optional[PersonaWithRoles] = None # Esto es crucial
 
-    creador: Optional["UsuarioBase"] = None 
-
+    creador: Optional["UsuarioAudit"] = None
+    modificador: Optional["UsuarioAudit"] = None
 
     class Config:
         from_attributes = True

@@ -2,7 +2,7 @@ from typing import List, Optional
 import os
 import shutil
 from decimal import Decimal
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
 from .. import auth as auth_utils
@@ -21,6 +21,8 @@ from ..models.detalle_compra import DetalleCompra
 from ..services.precio_service import PrecioService
 # Importar utilidades de stock
 from ..utils.stock_utils import calcular_stock_convertido, calcular_stock_desglosado
+# Importar servicio de auditoría
+from ..services.audit_service import AuditService
 from ..schemas.producto import (
     Producto,
     ProductoCreate,
@@ -89,6 +91,7 @@ router = APIRouter(
 
 @router.post("/", response_model=Producto, status_code=status.HTTP_201_CREATED)
 def create_producto(
+    request: Request,
     producto: ProductoCreate,
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos"))
@@ -118,6 +121,16 @@ def create_producto(
     db.add(new_producto)
     db.commit()
     db.refresh(new_producto, attribute_names=['categoria', 'creador', 'modificador', 'unidad_inventario', 'marca', 'conversiones'])
+
+    # Log de auditoría para creación de producto
+    AuditService.log_create(
+        db=db,
+        tabla="productos",
+        registro_id=new_producto.producto_id,
+        valores_despues=AuditService.serialize_model(new_producto),
+        usuario_id=current_user.usuario_id,
+        request=request
+    )
 
     return new_producto
 
@@ -218,6 +231,7 @@ def read_producto(
 
 @router.put("/{producto_id}", response_model=Producto)
 def update_producto(
+    request: Request,
     producto_id: int,
     producto_update: ProductoUpdate,
     db: Session = Depends(get_db),
@@ -233,6 +247,9 @@ def update_producto(
 
     if db_producto is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Producto no encontrado.")
+
+    # Capturar valores anteriores para auditoría
+    valores_antes = AuditService.serialize_model(db_producto)
 
     update_data = producto_update.model_dump(exclude_unset=True)
 
@@ -292,10 +309,22 @@ def update_producto(
     db.commit()
     db.refresh(db_producto, attribute_names=['categoria', 'creador', 'modificador', 'unidad_inventario', 'marca', 'conversiones'])
 
+    # Log de auditoría para actualización de producto
+    AuditService.log_update(
+        db=db,
+        tabla="productos",
+        registro_id=db_producto.producto_id,
+        valores_antes=valores_antes,
+        valores_despues=AuditService.serialize_model(db_producto),
+        usuario_id=current_user.usuario_id,
+        request=request
+    )
+
     return db_producto
 
 @router.patch("/{producto_id}/inactivar", status_code=status.HTTP_204_NO_CONTENT)
 def delete_producto(
+    request: Request,
     producto_id: int,
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos"))
@@ -335,15 +364,29 @@ def delete_producto(
             detail=f"Este producto no se puede desactivar porque está asociado a {' y '.join(transaction_details)}."
         )
 
+    # Capturar valores anteriores para auditoría
+    valores_antes = AuditService.serialize_model(db_producto)
+
     db_producto.estado = EstadoEnum.inactivo
     db_producto.modificado_por = current_user.usuario_id
 
     db.commit()
 
+    # Log de auditoría para inactivación de producto
+    AuditService.log_delete(
+        db=db,
+        tabla="productos",
+        registro_id=db_producto.producto_id,
+        valores_antes=valores_antes,
+        usuario_id=current_user.usuario_id,
+        request=request
+    )
+
     return {}
 
 @router.patch("/{producto_id}/activar", response_model=Producto)
 def activate_producto(
+    request: Request,
     producto_id: int,
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos"))
@@ -362,11 +405,25 @@ def activate_producto(
     if db_producto.estado == EstadoEnum.activo:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El producto ya está activo.")
 
+    # Capturar valores anteriores para auditoría
+    valores_antes = AuditService.serialize_model(db_producto)
+
     db_producto.estado = EstadoEnum.activo
     db_producto.modificado_por = current_user.usuario_id
 
     db.commit()
     db.refresh(db_producto)
+
+    # Log de auditoría para activación de producto
+    AuditService.log_update(
+        db=db,
+        tabla="productos",
+        registro_id=db_producto.producto_id,
+        valores_antes=valores_antes,
+        valores_despues=AuditService.serialize_model(db_producto),
+        usuario_id=current_user.usuario_id,
+        request=request
+    )
 
     return db_producto
 
@@ -422,6 +479,7 @@ def read_all_conversiones(
 
 @router.post("/conversiones/", response_model=Conversion, status_code=status.HTTP_201_CREATED)
 def create_conversion(
+    request: Request,
     conversion_data: ConversionCreate,
     producto_id: int,
     db: Session = Depends(get_db),
@@ -446,10 +504,22 @@ def create_conversion(
     db.add(new_conversion)
     db.commit()
     db.refresh(new_conversion)
+
+    # Log de auditoría para creación de conversión
+    AuditService.log_create(
+        db=db,
+        tabla="conversiones",
+        registro_id=new_conversion.conversion_id,
+        valores_despues=AuditService.serialize_model(new_conversion),
+        usuario_id=current_user.usuario_id,
+        request=request
+    )
+
     return new_conversion
 
 @router.put("/conversiones/{conversion_id}", response_model=Conversion)
 def update_conversion(
+    request: Request,
     conversion_id: int,
     conversion_data: ConversionCreate,
     db: Session = Depends(get_db),
@@ -458,6 +528,9 @@ def update_conversion(
     db_conversion = db.query(DBConversion).filter(DBConversion.id == conversion_id).first()
     if not db_conversion:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversión no encontrada.")
+
+    # Capturar valores anteriores para auditoría
+    valores_antes = AuditService.serialize_model(db_conversion)
 
     if conversion_data.nombre_presentacion != db_conversion.nombre_presentacion:
         existing_conversion = db.query(DBConversion).filter(
@@ -475,10 +548,23 @@ def update_conversion(
 
     db.commit()
     db.refresh(db_conversion)
+
+    # Log de auditoría para actualización de conversión
+    AuditService.log_update(
+        db=db,
+        tabla="conversiones",
+        registro_id=db_conversion.conversion_id,
+        valores_antes=valores_antes,
+        valores_despues=AuditService.serialize_model(db_conversion),
+        usuario_id=current_user.usuario_id,
+        request=request
+    )
+
     return db_conversion
 
 @router.delete("/conversiones/{conversion_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_conversion(
+    request: Request,
     conversion_id: int,
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos"))
@@ -486,9 +572,23 @@ def delete_conversion(
     db_conversion = db.query(DBConversion).filter(DBConversion.id == conversion_id).first()
     if not db_conversion:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversión no encontrada.")
-    
+
+    # Capturar valores anteriores para auditoría
+    valores_antes = AuditService.serialize_model(db_conversion)
+
     db.delete(db_conversion)
     db.commit()
+
+    # Log de auditoría para eliminación de conversión
+    AuditService.log_delete(
+        db=db,
+        tabla="conversiones",
+        registro_id=db_conversion.conversion_id,
+        valores_antes=valores_antes,
+        usuario_id=current_user.usuario_id,
+        request=request
+    )
+
     return {}
 
 @router.post("/calcular-precio-sugerido", response_model=PrecioSugeridoResponse)

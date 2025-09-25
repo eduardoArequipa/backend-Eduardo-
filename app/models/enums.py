@@ -22,3 +22,9 @@ class EstadoVentaEnum(str, Enum):
 class TipoMargenEnum(str, Enum):
     porcentaje = "porcentaje"
     fijo = "fijo"
+
+class TipoMovimientoEnum(str, Enum):
+    merma = "merma"
+    ajuste_positivo = "ajuste_positivo"
+    ajuste_negativo = "ajuste_negativo"
+    uso_interno = "uso_interno"

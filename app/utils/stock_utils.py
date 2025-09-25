@@ -5,7 +5,7 @@ from ..schemas.producto import StockConvertido
 
 class DesglosePresentacion:
     """Clase para representar el desglose detallado del stock"""
-    def __init__(self, nombre: str, cantidad: int, abreviatura: str = ""):
+    def __init__(self, nombre: str, cantidad: Decimal, abreviatura: str = ""):
         self.nombre = nombre
         self.cantidad = cantidad
         self.abreviatura = abreviatura or nombre[:3].upper()
@@ -42,26 +42,32 @@ def calcular_stock_desglosado(producto: DBProducto) -> Optional[List[DesglosePre
     )
     
     desglose = []
-    stock_restante = float(producto.stock)
-    
+    stock_restante = Decimal(str(producto.stock))
+
     # Calcular para cada presentación
     for conversion in conversiones_ordenadas:
-        unidades_por_presentacion = float(conversion.unidades_por_presentacion)
+        unidades_por_presentacion = Decimal(str(conversion.unidades_por_presentacion))
         cantidad = int(stock_restante // unidades_por_presentacion)
-        
+
         if cantidad > 0:
             desglose.append(DesglosePresentacion(
                 nombre=conversion.nombre_presentacion,
-                cantidad=cantidad,
+                cantidad=Decimal(str(cantidad)),
                 abreviatura=conversion.nombre_presentacion[:3].upper()
             ))
-            stock_restante -= cantidad * unidades_por_presentacion
+            stock_restante -= Decimal(str(cantidad)) * unidades_por_presentacion
     
     # Si queda residuo, agregar en unidad base
     if stock_restante > 0:
+        # Para unidades fraccionables, mantener decimales; para enteras, usar entero
+        if producto.unidad_inventario.es_fraccionable:
+            cantidad_restante = stock_restante.quantize(Decimal('0.01'))  # Mantener 2 decimales
+        else:
+            cantidad_restante = Decimal(str(int(stock_restante)))  # Solo enteros para unidades no fraccionables
+
         desglose.append(DesglosePresentacion(
             nombre=producto.unidad_inventario.nombre_unidad,
-            cantidad=int(stock_restante),
+            cantidad=cantidad_restante,
             abreviatura=producto.unidad_inventario.abreviatura
         ))
     

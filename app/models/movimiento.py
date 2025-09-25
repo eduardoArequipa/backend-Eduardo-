@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, String, Text, Numeric, TIMESTAMP, Foreig
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from .base import Base
+from .enums import TipoMovimientoEnum
 
 class MovimientoInventario(Base):
     __tablename__ = 'movimientos_inventario'
@@ -12,8 +13,8 @@ class MovimientoInventario(Base):
     tipo_movimiento = Column(String(20), nullable=False)
     cantidad = Column(Numeric(10, 3), nullable=False)
     motivo = Column(Text)
-    stock_anterior = Column(Integer, nullable=False)
-    stock_nuevo = Column(Integer, nullable=False)
+    stock_anterior = Column(Numeric(10, 3), nullable=False)
+    stock_nuevo = Column(Numeric(10, 3), nullable=False)
     fecha_movimiento = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
     # Relaciones para acceder a los objetos completos de Producto y Usuario

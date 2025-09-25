@@ -16,6 +16,7 @@ from ..schemas.marca import (
     MarcaBase,
     MarcaCreate,
     Marca,
+    MarcaPagination,
 )
 
 router = APIRouter(
@@ -28,6 +29,7 @@ router = APIRouter(
 def create_marca(
     marca: MarcaCreate,
     db: Session = Depends(get_db),
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/marcas"))
 ):
     """
     Crea una nueva marca en la base de datos.
@@ -47,12 +49,12 @@ def create_marca(
 
     return new_marca
 
-@router.get("/", response_model=List[Marca])
+@router.get("/", response_model=MarcaPagination)
 def read_marcas(
     estado: Optional[EstadoEnum] = Query(None, description="Filtrar por estado"),
     search: Optional[str] = Query(None, description="Texto de búsqueda por nombre de marca"),
     skip: int = Query(0, ge=0, description="Número de elementos a omitir (paginación)"),
-    limit: int = Query(100, gt=0, description="Número máximo de elementos a retornar (paginación)"),
+    limit: int = Query(10, gt=0, le=100, description="Número máximo de elementos a retornar (paginación)"),
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.require_authenticated_user)
 ):
@@ -68,14 +70,22 @@ def read_marcas(
     if search:
         query = query.filter(DBMarca.nombre_marca.ilike(f"%{search}%"))
 
-    marcas = query.offset(skip).limit(limit).all()
+    # Obtener el total de registros (antes de aplicar paginación)
+    total = query.count()
 
-    return marcas
+    # Aplicar paginación y ordenar por fecha de creación descendente
+    marcas = query.order_by(DBMarca.creado_en.desc()).offset(skip).limit(limit).all()
+
+    return {
+        "items": marcas,
+        "total": total
+    }
 
 @router.get("/{marca_id}", response_model=Marca)
 def read_marca(
     marca_id: int,
     db: Session = Depends(get_db),
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_authenticated_user)
 ):
     """
     Obtiene una marca específica por su ID.
@@ -148,6 +158,7 @@ def delete_marca(
 def activate_marca(
     marca_id: int,
     db: Session = Depends(get_db),
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/marcas"))
 ):
     """
     Activa una marca por su ID (cambia su estado a 'activo').

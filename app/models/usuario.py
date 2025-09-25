@@ -22,17 +22,23 @@ class Usuario(Base):
     bloqueado_hasta = Column(DateTime, nullable=True)
     estado = Column(Enum(EstadoEnum), default=EstadoEnum.activo) # Usamos el Enum
     creado_por = Column(Integer, ForeignKey('usuarios.usuario_id', ondelete='SET NULL'), nullable=True)
+    modificado_por = Column(Integer, ForeignKey('usuarios.usuario_id', ondelete='SET NULL'), nullable=True)
     foto_ruta = Column(String(255), nullable=True) # Ruta a la foto
 
     codigo_recuperacion = Column(String(100), nullable=True) # Almacena el código de recuperación
     expiracion_codigo_recuperacion = Column(DateTime(timezone=True), nullable=True)
+
+    # Campos de auditoría en español
+    fecha_creacion = Column(DateTime, default=func.now(), nullable=True)
+    fecha_modificacion = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=True)
 
     # Relación 1:1 con Persona
     persona = relationship("Persona", back_populates="usuario", uselist=False) # uselist=False para 1:1
 
     # Auto-referencia para creador y modificador
     # Es importante especificar remote_side para auto-referencias
-    creador = relationship("Usuario", remote_side=[usuario_id], backref="usuarios_creados", primaryjoin=usuario_id == creado_por)
+    creador = relationship("Usuario", remote_side=[usuario_id], foreign_keys=[creado_por], backref="usuarios_creados")
+    modificador = relationship("Usuario", remote_side=[usuario_id], foreign_keys=[modificado_por], backref="usuarios_modificados")
 
     # Relación 1:N con Compra (compras que este usuario creó - campo de auditoría)
     # La foreign_key está en el modelo Compra (Compra.creado_por)

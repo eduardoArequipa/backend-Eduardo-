@@ -6,7 +6,7 @@ from datetime import datetime
 class UnidadMedidaBase(BaseModel):
     nombre_unidad: str
     abreviatura: str
-    es_fraccionable: bool = False 
+    es_fraccionable: bool = False  # Permite cantidades decimales en ventas (ej: 0.5 metros) 
 
 class UnidadMedidaCreate(UnidadMedidaBase):
     descripcion: Optional[str] = None
