@@ -5,10 +5,10 @@ class GeneroEnum(str, Enum): # Usamos str, enum.Enum
     F = "F"
 
      
-class EstadoEnum(str, Enum): # Usamos str, enum.Enum para que SQLAlchemy mapee a VARCHAR
+class EstadoEnum(str, Enum): 
     activo = "activo"
     inactivo = "inactivo"
-    bloqueado = "bloqueado" # Para usuarios
+    bloqueado = "bloqueado" 
     
 class EstadoCompraEnum(str, Enum):
      pendiente = "pendiente"

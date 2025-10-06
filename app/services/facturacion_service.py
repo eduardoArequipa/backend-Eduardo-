@@ -11,6 +11,7 @@ import base64
 
 TESABIZ_API_URL = os.getenv("TESABIZ_API_URL")
 TESABIZ_PDF_URL = os.getenv("TESABIZ_PDF_URL")
+TESABIZ_ANULAR_URL = os.getenv("TESABIZ_ANULAR_URL")
 
 def get_datos_empresa(db: Session):
     empresa = db.query(Empresa).first()
@@ -218,3 +219,91 @@ async def get_factura_pdf_tesabiz(factura_id: int, db: Session):
             error_detail = f"Error inesperado al obtener PDF de Tesabiz: {str(e)}"
             print(error_detail)
             raise HTTPException(status_code=500, detail=error_detail)
+
+
+async def anular_factura_tesabiz(factura_id: int, codigo_motivo: int, db: Session):
+    """
+    Anula una factura electrónica en Tesabiz usando el servicio sincrónico.
+
+    Args:
+        factura_id: ID de la factura electrónica en la base de datos
+        codigo_motivo: Código del motivo de anulación según Tesabiz
+        db: Sesión de base de datos
+
+    Returns:
+        dict: Respuesta de Tesabiz con el resultado de la anulación
+    """
+    print(f"[ANULACION] Iniciando proceso de anulación para Factura ID: {factura_id}")
+
+    # Buscar la factura electrónica con sus relaciones
+    factura_db = db.query(FacturaElectronica).options(
+        joinedload(FacturaElectronica.venta).joinedload(Venta.persona)
+    ).filter(FacturaElectronica.factura_id == factura_id).first()
+
+    if not factura_db:
+        raise HTTPException(status_code=404, detail="Factura electrónica no encontrada.")
+
+    if factura_db.estado != "VALIDADA":
+        raise HTTPException(status_code=400, detail="Solo se pueden anular facturas con estado VALIDADA.")
+
+    if not factura_db.cuf:
+        raise HTTPException(status_code=400, detail="La factura no tiene un CUF válido para anular.")
+
+    # Verificar que la URL de anulación esté configurada
+    if not TESABIZ_ANULAR_URL:
+        raise HTTPException(status_code=500, detail="La URL para anular facturas (TESABIZ_ANULAR_URL) no está configurada.")
+
+    # Construir el payload para la anulación
+    anulacion_payload = {
+        "nitEmisor": "1028341029",  # NIT de la empresa
+        "cuf": factura_db.cuf,
+        "numeroFactura": factura_db.factura_id,
+        "idDocFiscalERP": f"121650000{factura_db.factura_id}3212",  # Mismo formato que en la creación
+        "codigoMotivo": codigo_motivo
+    }
+
+    print(f"[ANULACION] Payload para anulación: {json.dumps(anulacion_payload, indent=2)}")
+
+    headers = {"Content-Type": "application/json"}
+
+    try:
+        async with httpx.AsyncClient(verify=False) as client:
+            response = await client.post(TESABIZ_ANULAR_URL, json=anulacion_payload, headers=headers, timeout=40.0)
+            response.raise_for_status()
+
+            respuesta_tesabiz = response.json()
+            print(f"[ANULACION] Respuesta de Tesabiz: {json.dumps(respuesta_tesabiz, indent=2)}")
+
+            # Verificar si la anulación fue exitosa
+            proceso_respuesta = respuesta_tesabiz.get("proceso")
+
+            if proceso_respuesta:
+                codigo_recepcion = proceso_respuesta.get("codigoRecepcion")
+
+                if str(codigo_recepcion) == "905":  # Código de anulación exitosa según documentación
+                    # Actualizar el estado de la factura a ANULADA
+                    factura_db.estado = "ANULADA"
+                    factura_db.detalles_respuesta = json.dumps(respuesta_tesabiz)
+                    db.commit()
+                    print(f"[ANULACION] Factura ID {factura_id} anulada exitosamente.")
+                    return {"success": True, "message": "Factura anulada exitosamente", "codigo_recepcion": codigo_recepcion}
+                else:
+                    # Error en la anulación
+                    error_msg = proceso_respuesta.get("txtRespuesta", f"Error de anulación con código: {codigo_recepcion}")
+                    print(f"[ANULACION] Error en anulación: {error_msg}")
+                    raise HTTPException(status_code=400, detail=f"Error al anular factura: {error_msg}")
+            else:
+                # Respuesta de error
+                respuesta_error = respuesta_tesabiz.get("respuesta", {})
+                error_msg = respuesta_error.get("txtRespuesta", "Error desconocido en la anulación.")
+                print(f"[ANULACION] Error de Tesabiz: {error_msg}")
+                raise HTTPException(status_code=400, detail=f"Error al anular factura: {error_msg}")
+
+    except httpx.HTTPStatusError as e:
+        error_detail = f"Error HTTP al anular factura en Tesabiz: {e.response.status_code} - {e.response.text}"
+        print(f"[ANULACION] {error_detail}")
+        raise HTTPException(status_code=500, detail=error_detail)
+    except Exception as e:
+        error_detail = f"Error inesperado al anular factura: {str(e)}"
+        print(f"[ANULACION] {error_detail}")
+        raise HTTPException(status_code=500, detail=error_detail)

@@ -40,7 +40,6 @@ class ProductoBase(BaseModel):
     categoria_id: int
     unidad_inventario_id: int  # Renombrado
     marca_id: int
-    unidad_compra_predeterminada: Optional[str] = None # Nuevo
     tipo_margen: Optional[TipoMargenEnum] = TipoMargenEnum.porcentaje
     margen_valor: Optional[Decimal] = Decimal('30.0')
     precio_manual_activo: Optional[bool] = False
@@ -62,7 +61,6 @@ class ProductoUpdate(ProductoBase):
     estado: Optional[EstadoEnum] = None
     unidad_inventario_id: Optional[int] = None # Renombrado
     marca_id: Optional[int] = None
-    unidad_compra_predeterminada: Optional[str] = None # Nuevo
     tipo_margen: Optional[TipoMargenEnum] = None
     margen_valor: Optional[Decimal] = None
     precio_manual_activo: Optional[bool] = None

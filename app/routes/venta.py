@@ -17,7 +17,7 @@ from ..models.enums import EstadoVentaEnum, EstadoEnum
 from ..schemas.producto import Producto
 # Importar los esquemas actualizados
 from ..schemas.venta import Venta, VentaCreate, ProductoSchemaBase, VentaPagination
-from ..services.facturacion_service import crear_factura_tesabiz
+from ..services.facturacion_service import crear_factura_tesabiz, anular_factura_tesabiz
 from ..services.audit_service import AuditService
 
 router = APIRouter(
@@ -253,7 +253,7 @@ def get_venta(
     return venta
 
 @router.patch("/{venta_id}/anular", response_model=Venta)
-def anular_venta(
+async def anular_venta(
     request: Request,
     db_venta: DBVenta = Depends(get_venta_or_404),
     db: Session = Depends(get_db),
@@ -268,7 +268,7 @@ def anular_venta(
 
     # Capturar valores antes para audit log
     valores_antes = {
-        "estado": db_venta.estado.value,
+        "estado": db_venta.estado.value if hasattr(db_venta.estado, 'value') else str(db_venta.estado),
         "total": float(db_venta.total),
         "persona_id": db_venta.persona_id,
         "metodo_pago_id": db_venta.metodo_pago_id
@@ -305,6 +305,21 @@ def anular_venta(
                   f"Anterior: {(producto.stock or 0) - stock_a_reponer}, "
                   f"Nuevo: {producto.stock}, "
                   f"Repuesto: {stock_a_reponer}")
+
+        # Intentar anular la factura electrónica si existe
+        if db_venta.factura_electronica and db_venta.factura_electronica.estado == "VALIDADA":
+            try:
+                print(f"[ANULACION VENTA] Anulando factura electrónica ID: {db_venta.factura_electronica.factura_id}")
+                resultado_anulacion = await anular_factura_tesabiz(
+                    db_venta.factura_electronica.factura_id,
+                    1,  # Código de motivo por defecto (1 = por error de importe)
+                    db
+                )
+                print(f"[ANULACION VENTA] Factura anulada exitosamente: {resultado_anulacion}")
+            except Exception as e:
+                print(f"[ANULACION VENTA] Warning: No se pudo anular la factura electrónica: {e}")
+                # No interrumpir la anulación de la venta si falla la anulación de la factura
+                # La factura puede anularse manualmente después
 
         db_venta.estado = EstadoVentaEnum.anulada
         db_venta.modificado_por = current_user.usuario_id

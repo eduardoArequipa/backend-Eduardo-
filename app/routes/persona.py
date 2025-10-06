@@ -20,8 +20,7 @@ router = APIRouter(
     tags=["personas"]
 )
 
-# Roles que pueden gestionar personas (crear, editar, eliminar)
-ROLES_CAN_MANAGE_PERSONS = ["Administrador", "Empleado"] # Estos son roles de USUARIO
+ 
 
 # --- Dependencias Reutilizables ---
 def get_persona_or_404(
@@ -82,12 +81,11 @@ def create_persona(
         db.add(new_persona) # Agregamos la persona a la sesión
         db.flush() # Forzamos la obtención del persona_id antes de crear el usuario
 
-        # 4. Crear Usuario asociado si 'usuario_data' fue proporcionado
         if persona.usuario_data:
             # Validar que los roles de persona de la nueva_persona permitan ser usuario del sistema
             # Esto es una lógica de negocio clave: solo 'Administrador' o 'Empleado' pueden tener un usuario.
             persona_role_names = {rol.nombre_rol for rol in new_persona.roles}
-            if not any(role_name in persona_role_names for role_name in ROLES_CAN_MANAGE_PERSONS):
+            if not any(role_name in persona_role_names for role_name in ["Administrador", "Empleado"]):
                  raise HTTPException(
                      status_code=status.HTTP_400_BAD_REQUEST,
                      detail="Solo personas con los roles 'Administrador' o 'Empleado' pueden tener una cuenta de usuario."

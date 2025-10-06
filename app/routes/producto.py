@@ -64,7 +64,6 @@ def agregar_stock_convertido(producto: DBProducto) -> dict:
         "categoria_id": producto.categoria_id,
         "unidad_inventario_id": producto.unidad_inventario_id,
         "marca_id": producto.marca_id,
-        "unidad_compra_predeterminada": producto.unidad_compra_predeterminada,
         "tipo_margen": producto.tipo_margen,
         "margen_valor": producto.margen_valor,
         "precio_manual_activo": producto.precio_manual_activo,
@@ -509,7 +508,7 @@ def create_conversion(
     AuditService.log_create(
         db=db,
         tabla="conversiones",
-        registro_id=new_conversion.conversion_id,
+        registro_id=new_conversion.id,
         valores_despues=AuditService.serialize_model(new_conversion),
         usuario_id=current_user.usuario_id,
         request=request
@@ -553,7 +552,7 @@ def update_conversion(
     AuditService.log_update(
         db=db,
         tabla="conversiones",
-        registro_id=db_conversion.conversion_id,
+        registro_id=db_conversion.id,
         valores_antes=valores_antes,
         valores_despues=AuditService.serialize_model(db_conversion),
         usuario_id=current_user.usuario_id,

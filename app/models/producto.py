@@ -26,8 +26,6 @@ class Producto(Base):
     unidad_inventario_id = Column(Integer, ForeignKey('unidades_medida.unidad_id'), nullable=False)
     marca_id = Column(Integer, ForeignKey('marcas.marca_id'), nullable=False) # FK no nula
     
-    # Nuevo campo para la unidad de compra predeterminada
-    unidad_compra_predeterminada = Column(String(50), nullable=True)
 
     # Campos para el sistema de márgenes y precios automáticos
     tipo_margen = Column(Enum(TipoMargenEnum), default=TipoMargenEnum.porcentaje, nullable=False)
