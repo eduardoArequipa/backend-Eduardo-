@@ -39,6 +39,18 @@ def get_usuario_or_404(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado.")
     return usuario
 
+def get_usuario_for_update(
+    usuario_id: int = Path(..., title="El ID del usuario"),
+    db: Session = Depends(get_db)
+) -> DBUsuario:
+    """
+    Dependencia para obtener un usuario por ID sin precargar relaciones problemáticas para updates.
+    """
+    usuario = db.query(DBUsuario).filter(DBUsuario.usuario_id == usuario_id).first()
+    if usuario is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado.")
+    return usuario
+
 # --- Rutas de API para Usuarios ---
 
 @router.get("/", response_model=UsuarioPagination)
@@ -160,7 +172,7 @@ def create_usuario(
 @router.put("/{usuario_id}", response_model=UsuarioReadAudit)
 def update_usuario(
     usuario_update: UsuarioUpdate,
-    db_usuario: DBUsuario = Depends(get_usuario_or_404),
+    db_usuario: DBUsuario = Depends(get_usuario_for_update),
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/usuarios")) # Verificar acceso al menú de categorías
 ):
@@ -176,6 +188,10 @@ def update_usuario(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para actualizar este usuario.")
 
     update_data = usuario_update.model_dump(exclude_unset=True) # Solo los campos que se enviaron
+
+    # Evitar que un usuario cambie su propio estado, lo que causa una dependencia circular
+    if is_owner and 'estado' in update_data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No puedes cambiar tu propio estado de activación.")
 
     # Control de permiso para cambiar el estado
     if 'estado' in update_data and not is_admin:
@@ -204,7 +220,7 @@ def update_usuario(
 
 @router.delete("/{usuario_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_usuario(
-    db_usuario: DBUsuario = Depends(get_usuario_or_404),
+    db_usuario: DBUsuario = Depends(get_usuario_for_update),
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/usuarios")) # Verificar acceso al menú de categorías
 ):
@@ -218,12 +234,13 @@ def delete_usuario(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El usuario ya está inactivo.")
     
     db_usuario.estado = EstadoEnum.inactivo
+    db_usuario.modificado_por = current_user.usuario_id # Auditoría
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 @router.patch("/{usuario_id}/activar", response_model=UsuarioReadAudit)
 def activate_usuario(
-    db_usuario: DBUsuario = Depends(get_usuario_or_404),
+    db_usuario: DBUsuario = Depends(get_usuario_for_update),
     db: Session = Depends(get_db),
     current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/usuarios")) # Verificar acceso al menú de categorías
 ):
@@ -231,17 +248,19 @@ def activate_usuario(
     Activa el estado de un usuario.
     Solo Administradores pueden activar usuarios.
     """
+    if db_usuario.usuario_id == current_user.usuario_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No puedes activar tu propio usuario.")
     if db_usuario.estado == EstadoEnum.activo:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El usuario ya está activo.")
     
     db_usuario.estado = EstadoEnum.activo
+    db_usuario.modificado_por = current_user.usuario_id # Auditoría
     db.commit()
     db.refresh(db_usuario)
     return db_usuario
 
-# --- Rutas para la gestión de Roles de USUARIO ---
-# NOTA: Estas rutas asignan/quitan ROLES a la entidad PERSONA del usuario.
-# La tabla de asociación es entre PERSONA y ROL.
+
+
 @router.post("/{usuario_id}/roles/{rol_id}", response_model=UsuarioSchema)
 def assign_role_to_user(
     rol_id: int = Path(..., title="ID del Rol a asignar a la Persona del usuario"),

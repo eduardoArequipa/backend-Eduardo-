@@ -138,7 +138,7 @@ def delete_categoria(
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-@router.patch("/{categoria_id}/activar", response_model=Categoria)
+@router.patch("/{categoria_id}/activar", status_code=status.HTTP_204_NO_CONTENT)
 def activate_categoria(
     db_categoria: DBCategoria = Depends(get_categoria_or_404),
     db: Session = Depends(get_db),
@@ -155,4 +155,4 @@ def activate_categoria(
 
     db.commit()
     db.refresh(db_categoria)
-    return db_categoria
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

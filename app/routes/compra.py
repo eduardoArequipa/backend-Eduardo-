@@ -565,16 +565,21 @@ def completar_compra(
                         detail=f"La presentación '{detalle.presentacion_compra}' no es válida o no está habilitada para compras en el producto '{db_producto.nombre}'."
                     )
             
-            # --- INICIO DE LA NUEVA LÓGICA ---
 
             # 1. Calcular el nuevo costo por unidad base
             nuevo_precio_compra_unitario = precio_presentacion / conversion_factor
 
             # 2. Calcular la cantidad total de unidades base a añadir al stock
             stock_to_add = Decimal(detalle.cantidad) * conversion_factor
-            
-            # 3. Actualizar el stock del producto (Corregido a 'stock')
+
+            # 3. Actualizar el stock del producto
             db_producto.stock = (db_producto.stock or Decimal(0)) + stock_to_add
+
+            # 4. ACTUALIZAR PRECIO DE COMPRA AL ÚLTIMO PRECIO (sin promedio ponderado)
+            db_producto.precio_compra = nuevo_precio_compra_unitario
+
+            # 5. Recalcular precio de venta automáticamente
+            db_producto.actualizar_precio_venta_automatico()
 
             # --- FIN DE LA NUEVA LÓGICA ---
 
@@ -584,11 +589,11 @@ def completar_compra(
         db_compra.estado = EstadoCompraEnum.completada
         db_compra.modificado_por = current_user.usuario_id 
 
-        # Hacer commit de los cambios de stock primero
+        # Hacer commit de los cambios (stock y precios ya actualizados arriba)
         db.commit()
-        
-        # Ahora actualizar precios usando el servicio (que recalcula promedio ponderado)
-        PrecioService.actualizar_precios_por_compra(db, compra_id)
+
+        # Nota: Ya no usamos PrecioService.actualizar_precios_por_compra()
+        # porque ahora actualizamos directamente al último precio de compra
 
         db.refresh(db_compra)
 

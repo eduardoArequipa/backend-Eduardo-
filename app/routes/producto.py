@@ -582,7 +582,7 @@ def delete_conversion(
     AuditService.log_delete(
         db=db,
         tabla="conversiones",
-        registro_id=db_conversion.conversion_id,
+        registro_id=db_conversion.id,
         valores_antes=valores_antes,
         usuario_id=current_user.usuario_id,
         request=request

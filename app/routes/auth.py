@@ -19,7 +19,11 @@ from ..models.menu import Menu as DBMenu
 from ..models.rol import Rol as DBRol # Importar Rol
 from ..models.enums import EstadoEnum # Asegúrate de que EstadoEnum esté importado correctamente
 from ..services.audit_service import AuditService
-
+    # Buscar todos los menús que tienen relación con estos roles
+from ..models.menu import Menu
+from ..models.rol_menu import RolMenu
+from ..models.rol import Rol
+from sqlalchemy.orm import joinedload
 router = APIRouter(
     prefix="/auth",
     tags=["Auth"]
@@ -93,7 +97,6 @@ def login_for_access_token(
         remaining_time_seconds = (user_bloqueado_hasta_aware - current_utc_time).total_seconds()
         minutes = int(remaining_time_seconds // 60)
         seconds = int(remaining_time_seconds % 60)
-        print(f"DEBUG: Usuario '{user.nombre_usuario}' actualmente bloqueado. Tiempo restante: {minutes}m {seconds}s")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Usuario bloqueado. Inténtelo de nuevo en {minutes} minuto(s) y {seconds} segundo(s).",
@@ -113,10 +116,8 @@ def login_for_access_token(
             db.add(user)
             db.commit()
             db.refresh(user)
-            print(f"DEBUG: Intentos fallidos guardados y refrescados. Valor actual: {user.intentos_fallidos}")
         except Exception as e:
             db.rollback()
-            print(f"ERROR: Fallo al guardar intentos fallidos: {e}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Error interno del servidor al actualizar intentos de login."
@@ -125,8 +126,6 @@ def login_for_access_token(
         if user.intentos_fallidos >= MAX_FAILED_ATTEMPTS:
             user.estado = EstadoEnum.bloqueado # Usa EstadoEnum directamente
             user.bloqueado_hasta = datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_TIME_MINUTES) # Almacenar como timezone-aware
-            print(f"DEBUG: ¡Límite de intentos alcanzado! Bloqueando usuario '{user.nombre_usuario}'.")
-            print(f"DEBUG: Nuevo estado: {user.estado}, Bloqueado hasta: {user.bloqueado_hasta}")
             try:
                 db.add(user)
                 db.commit()
@@ -162,31 +161,24 @@ def login_for_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    print(f"DEBUG: Contraseña correcta para '{user.nombre_usuario}'.")
     user.intentos_fallidos = 0
     user.bloqueado_hasta = None # Reiniciar a None es correcto
     if user.estado == EstadoEnum.bloqueado: # Usa EstadoEnum directamente
         user.estado = EstadoEnum.activo # Usa EstadoEnum directamente
-        print(f"DEBUG: Usuario '{user.nombre_usuario}' activado después de login exitoso.")
 
-    print(f"DEBUG: Reiniciando intentos fallidos y bloqueo. Nuevos valores: {user.intentos_fallidos}, {user.bloqueado_hasta}, {user.estado}")
     try:
         db.add(user)
         db.commit()
         db.refresh(user)
-        print("DEBUG: Cambios de éxito de login guardados y refrescados.")
     except Exception as e:
         db.rollback()
-        print(f"ERROR: Fallo al reiniciar intentos fallidos en login exitoso: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error interno del servidor al procesar el login exitoso."
         )
 
     # Ahora obtén los roles de la persona asociada al usuario
-    # El objeto `user` ya debería tener `persona` y `persona.roles` cargados debido al joinedload inicial
     user_roles = [rol.nombre_rol for rol in user.persona.roles] if user.persona and user.persona.roles else []
-    print(f"DEBUG: Roles obtenidos para '{user.nombre_usuario}': {user_roles}")
 
 
     access_token_expires = timedelta(minutes=auth_utils.ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -203,7 +195,6 @@ def login_for_access_token(
         success=True
     )
 
-    print("DEBUG: Token de acceso generado exitosamente.")
     return {"access_token": access_token, "token_type": "bearer"}
 
 # Endpoint para obtener los menús del usuario actual
@@ -225,7 +216,6 @@ def read_user_menus(
     # Ordenar los menús por ID para una presentación consistente
     sorted_menus = sorted(list(user_menus), key=lambda menu: menu.menu_id)
     
-    print(f"[DEBUG BACKEND] Usuario '{current_user.nombre_usuario}' tiene acceso a {len(sorted_menus)} menús: {[menu.nombre for menu in sorted_menus]}")
     
     return sorted_menus
 
@@ -244,11 +234,7 @@ def read_user_menus_with_roles(
     # Obtener todos los IDs de roles del usuario
     user_role_ids = [rol.rol_id for rol in current_user.persona.roles]
 
-    # Buscar todos los menús que tienen relación con estos roles
-    from ..models.menu import Menu
-    from ..models.rol_menu import RolMenu
-    from ..models.rol import Rol
-    from sqlalchemy.orm import joinedload
+
 
     # Query que trae menús con sus relaciones rol_menus precargadas
     menus_query = db.query(Menu).options(
@@ -283,7 +269,6 @@ def read_user_menus_with_roles(
     # Ordenar por menu_id
     result.sort(key=lambda m: m["menu_id"])
 
-    print(f"[DEBUG] Usuario '{current_user.nombre_usuario}' - Menús con roles: {len(result)}")
 
     return result
 
@@ -311,14 +296,12 @@ async def forgot_password_request(
             user = persona.usuario
 
     if not user:
-        print(f"ADVERTENCIA: Intento de recuperación para usuario/email no encontrado: {request.username_or_email}")
         # Se devuelve un mensaje genérico por seguridad para no revelar si el usuario existe o no
         return {"message": "Si la dirección de correo o el usuario son válidos, se ha enviado un código de recuperación."}
 
     # Asegurarse de que la persona tenga un email antes de intentar enviar
     user_email = user.persona.email if user.persona else None
     if not user_email:
-        print(f"ADVERTENCIA: Usuario '{user.nombre_usuario}' no tiene un correo electrónico asociado para recuperación. ID: {user.usuario_id}")
         return {"message": "Si la dirección de correo o el usuario son válidos, se ha enviado un código de recuperación."}
 
     recovery_code = auth_utils.generate_recovery_code()
@@ -330,11 +313,8 @@ async def forgot_password_request(
         db.add(user)
         db.commit()
         db.refresh(user)
-        print(f"DEBUG: Código de recuperación generado para '{user.nombre_usuario}'. Código: {recovery_code}")
-        print(f"DEBUG: Expiración código guardado (desde generación): {user.expiracion_codigo_recuperacion} (tzinfo: {user.expiracion_codigo_recuperacion.tzinfo})")
     except Exception as e:
         db.rollback()
-        print(f"ERROR: Fallo al guardar código de recuperación para '{user.nombre_usuario}': {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error interno del servidor al procesar la solicitud de recuperación."
@@ -342,7 +322,6 @@ async def forgot_password_request(
 
     # Aquí iría la lógica para enviar el email real
     auth_utils.send_recovery_email(user_email, user.nombre_usuario, recovery_code)
-    print(f"DEBUG: Correo de recuperación enviado (simulado/real) a {user_email}")
 
     return {"message": "Si la dirección de correo o el usuario son válidos, se ha enviado un código de recuperación."}
 
@@ -375,25 +354,13 @@ def reset_password(
             detail="Usuario o correo electrónico no encontrado."
         )
 
-    # --- LÍNEAS DE DEPURACIÓN ---
-    print(f"\n--- DEBUGGING PASSWORD RESET EXPIRATION ---")
-    print(f"  Código recibido: {request.recovery_code}")
-    print(f"  Código en DB (antes de helper): {user.codigo_recuperacion}")
-    print(f"  Expiración en DB (antes de helper): {user.expiracion_codigo_recuperacion} (tzinfo: {user.expiracion_codigo_recuperacion.tzinfo if user.expiracion_codigo_recuperacion else 'None'})")
-    # ---------------------------------------------
 
     # Asegurarse de que el campo `expiracion_codigo_recuperacion` sea timezone-aware
     user_expiracion_codigo_recuperacion_aware = make_datetime_utc_aware(user.expiracion_codigo_recuperacion)
     current_utc_time = datetime.now(timezone.utc)
 
-    # --- LÍNEAS DE DEPURACIÓN ---
-    print(f"  Expiración en DB (después de helper): {user_expiracion_codigo_recuperacion_aware} (tzinfo: {user_expiracion_codigo_recuperacion_aware.tzinfo if user_expiracion_codigo_recuperacion_aware else 'None'})")
-    print(f"  Tiempo UTC Actual: {current_utc_time} (tzinfo: {current_utc_time.tzinfo})")
-    print(f"  ¿current_utc_time > user_expiracion_codigo_recuperacion_aware?: {current_utc_time > (user_expiracion_codigo_recuperacion_aware or datetime.min.replace(tzinfo=timezone.utc))}")
-    # ---------------------------------------------
 
     if not user.codigo_recuperacion or user.codigo_recuperacion != request.recovery_code:
-        print(f"ADVERTENCIA: Intento de reinicio de contraseña fallido para '{user.nombre_usuario}'. Código incorrecto.")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Código de recuperación inválido o usuario/email incorrecto."
@@ -408,8 +375,6 @@ def reset_password(
             db.commit()
         except Exception as e:
             db.rollback()
-            print(f"ERROR: Fallo al limpiar código expirado para '{user.nombre_usuario}': {e}")
-        print(f"ADVERTENCIA: Intento de reinicio de contraseña fallido para '{user.nombre_usuario}'. Código expirado.")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Código de recuperación expirado o inválido. Por favor, solicita uno nuevo."
@@ -428,7 +393,6 @@ def reset_password(
         db.add(user)
         db.commit()
         db.refresh(user)
-        print(f"DEBUG: Contraseña de '{user.nombre_usuario}' restablecida exitosamente y cuenta activada.")
     except Exception as e:
         db.rollback()
         

@@ -16,11 +16,10 @@ from passlib.context import CryptContext
 
 from .database import get_db
 from .models.usuario import Usuario
-from .models.persona import Persona # Importamos Persona para joinedload
-from .models.enums import EstadoEnum # Importamos el Enum
+from .models.persona import Persona 
+from .models.enums import EstadoEnum 
 from .schemas.token import TokenData
-from .models.rol import Rol # Importamos Rol para joinedload
-# --- CONSTANTE DE EXPIRACIÓN DEL CÓDIGO DE RECUPERACIÓN ---
+from .models.rol import Rol 
 RECOVERY_CODE_EXPIRE_MINUTES = int(os.getenv("RECOVERY_CODE_EXPIRE_MINUTES", 15))
 
 # Configuración de seguridad
@@ -36,7 +35,6 @@ EMAIL_SMTP_PORT = int(os.getenv("EMAIL_SMTP_PORT", 587)) # Puerto SMTP (587 para
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# OAuth2 Bearer token (para proteger rutas)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login") # 'auth/login' es la ruta del endpoint de login
 
 # Funciones de hashing y verificación de contraseñas
@@ -72,14 +70,6 @@ def send_recovery_email(recipient_email: str, username: str, code: str):
     NOTA: Para producción, se recomienda usar un servicio de terceros (SendGrid, Mailgun, etc.)
           o una configuración SMTP más robusta y segura.
     """
-    # --- AÑADE ESTAS LÍNEAS DE DEPURACIÓN AQUÍ ---
-    print(f"DEBUGGING EMAIL CONFIG:")
-    print(f"  EMAIL_SENDER: {EMAIL_SENDER}")
-    print(f"  EMAIL_PASSWORD: {'*' * (len(EMAIL_PASSWORD) if EMAIL_PASSWORD else 0)}") # Oculta la contraseña por seguridad
-    print(f"  EMAIL_SMTP_SERVER: {EMAIL_SMTP_SERVER}")
-    print(f"  EMAIL_SMTP_PORT: {EMAIL_SMTP_PORT}")
-    print(f"  Type of EMAIL_SMTP_PORT: {type(EMAIL_SMTP_PORT)}")
-    # ----------------------------------------------
 
     if not EMAIL_SENDER or not EMAIL_PASSWORD:
         print("ADVERTENCIA: Variables de entorno de correo no configuradas (EMAIL_SENDER o EMAIL_PASSWORD). No se enviará el correo de recuperación real.")
@@ -169,11 +159,7 @@ def get_current_active_user(current_user: Usuario = Depends(get_current_user)):
                 detail=f"Usuario bloqueado temporalmente. Inténtelo de nuevo en {minutes} minuto(s) y {seconds} segundo(s)."
             )
         else:
-            # Si el estado es 'bloqueado' pero 'bloqueado_hasta' ya pasó,
-            # lo ideal es que un login exitoso lo restablezca a 'activo'.
-            # Para fines de acceso a rutas protegidas, si está 'bloqueado' y el tiempo pasó
-            # pero no ha habido un login exitoso para restablecerlo, asumimos que aún no está "activo"
-            # para acceder a rutas protegidas.
+
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Usuario inactivo o con estado de bloqueo pendiente de reinicio.")
 
     return current_user
@@ -206,8 +192,6 @@ def require_menu_access(menu_ruta: str):
             for menu in rol.menus
         }
         
-        print(f"[DEBUG AUTH] Usuario '{current_user.nombre_usuario}' intentando acceder a '{menu_ruta}'.")
-        print(f"[DEBUG AUTH] Rutas permitidas para el usuario: {user_menu_rutas}")
 
         # Comprobar si la ruta requerida está en el conjunto de rutas permitidas
         if menu_ruta not in user_menu_rutas:

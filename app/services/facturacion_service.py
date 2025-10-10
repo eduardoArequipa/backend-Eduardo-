@@ -197,7 +197,7 @@ async def get_factura_pdf_tesabiz(factura_id: int, db: Session):
             response.raise_for_status()
             
             respuesta_tesabiz = response.json()
-            print(f"Respuesta de Tesabiz para PDF: {json.dumps(respuesta_tesabiz, indent=2)}")
+         #   print(f"Respuesta de Tesabiz para PDF: {json.dumps(respuesta_tesabiz, indent=2)}")
 
             doc_fiscal = respuesta_tesabiz.get("docFiscal")
             if not doc_fiscal or not isinstance(doc_fiscal, dict):
@@ -205,6 +205,19 @@ async def get_factura_pdf_tesabiz(factura_id: int, db: Session):
                 raise HTTPException(status_code=404, detail=error_msg)
 
             pdf_base64 = doc_fiscal.get("archivo")
+
+            # Buscar el link directo de la factura en pilotSiat
+           # link_pilotSiat = doc_fiscal.get("linkPilotSiat") or doc_fiscal.get("url") or doc_fiscal.get("link")
+
+          #  if link_pilotSiat:
+           #     print(f"🔗 LINK FACTURA PILOTSIAT: {link_pilotSiat}")
+            #else:
+                # Construir link usando el CUF (formato estándar de pilotSiat)
+            if factura_db.cuf:
+                link_construido = f"https://pilotosiat.impuestos.gob.bo/consulta/QR?nit=1028341029&cuf={factura_db.cuf}&numero={factura_db.factura_id}&t=2"
+                print(f"🔗 LINK FACTURA PILOTSIAT (construido): {link_construido}")
+            else:
+                print("ℹ️  No se pudo generar link - CUF no disponible")
 
             if not pdf_base64:
                 raise HTTPException(status_code=404, detail="La respuesta de Tesabiz no contiene el campo 'archivo' con el PDF dentro de 'docFiscal'.")
