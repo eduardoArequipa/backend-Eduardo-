@@ -45,12 +45,18 @@ def create_categoria(
     Crea una nueva Categoría.
     Solo accesible por usuarios con permisos de gestión de categorías.
     """
-    db_categoria = db.query(DBCategoria).filter(DBCategoria.nombre_categoria== categoria.nombre_categoria.lower().strip()
-).first()
+    # Validar que el nombre no esté duplicado (ignorando mayúsculas/minúsculas y espacios)
+    nombre_limpio = categoria.nombre_categoria.strip()
+    db_categoria = db.query(DBCategoria).filter(
+        func.lower(DBCategoria.nombre_categoria) == func.lower(nombre_limpio)
+    ).first()
     if db_categoria:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ya existe una categoría con este nombre.")
 
-    new_categoria = DBCategoria(**categoria.model_dump())
+    # Crear la nueva categoría con el nombre limpio
+    new_categoria_data = categoria.model_dump()
+    new_categoria_data['nombre_categoria'] = nombre_limpio
+    new_categoria = DBCategoria(**new_categoria_data)
 
     db.add(new_categoria)
     db.commit()
@@ -106,12 +112,26 @@ def update_categoria(
     Actualiza la información de una Categoría existente por su ID.
     Solo accesible por usuarios con permisos de gestión de categorías.
     """
-    if categoria_update.nombre_categoria is not None and categoria_update.nombre_categoria != db_categoria.nombre_categoria:
-         existing_categoria_with_new_name = db.query(DBCategoria).filter(DBCategoria.nombre_categoria == categoria_update.nombre_categoria).first()
-         if existing_categoria_with_new_name and existing_categoria_with_new_name.categoria_id != db_categoria.categoria_id:
-              raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ya existe otra categoría con este nombre.")
-
     update_data = categoria_update.model_dump(exclude_unset=True)
+
+    # Si se está actualizando el nombre, validar duplicados (ignorando mayúsculas/minúsculas y espacios)
+    if "nombre_categoria" in update_data:
+        nombre_limpio = update_data["nombre_categoria"].strip()
+        
+        # Comprobar si el nombre limpio es diferente al existente (ignorando mayúsculas/minúsculas)
+        if nombre_limpio.lower() != db_categoria.nombre_categoria.lower():
+            # Buscar si ya existe otra categoría con ese nombre
+            existing_categoria = db.query(DBCategoria).filter(
+                func.lower(DBCategoria.nombre_categoria) == func.lower(nombre_limpio),
+                DBCategoria.categoria_id != db_categoria.categoria_id
+            ).first()
+            
+            if existing_categoria:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ya existe otra categoría con este nombre.")
+        
+        # Usar el nombre limpio para la actualización
+        update_data["nombre_categoria"] = nombre_limpio
+
     for field, value in update_data.items():
         setattr(db_categoria, field, value)
     db.commit()

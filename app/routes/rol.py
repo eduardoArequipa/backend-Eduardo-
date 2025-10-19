@@ -71,19 +71,22 @@ def create_rol(
     """
     Crea un nuevo rol con validación de duplicados (case-insensitive).
     """
-    # Verificar si ya existe un rol con el mismo nombre (case-insensitive)
+    # Verificar si ya existe un rol con el mismo nombre (case-insensitive y sin espacios)
+    nombre_limpio = rol_data.nombre_rol.strip()
     existing_rol = db.query(DBRol).filter(
-        DBRol.nombre_rol.ilike(rol_data.nombre_rol.strip())
+        DBRol.nombre_rol.ilike(nombre_limpio)
     ).first()
     
     if existing_rol:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, 
-            detail=f"Ya existe un rol con el nombre '{rol_data.nombre_rol}'"
+            detail=f"Ya existe un rol con el nombre '{nombre_limpio}'"
         )
     
     try:
-        db_rol = DBRol(**rol_data.model_dump())
+        rol_dict = rol_data.model_dump()
+        rol_dict['nombre_rol'] = nombre_limpio
+        db_rol = DBRol(**rol_dict)
         db.add(db_rol)
         db.commit()
         db.refresh(db_rol)
@@ -110,21 +113,25 @@ def update_rol(
     if not db_rol:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rol no encontrado.")
     
-    # Si se está actualizando el nombre, verificar duplicados
-    if rol_data.nombre_rol and rol_data.nombre_rol.strip() != db_rol.nombre_rol:
-        existing_rol = db.query(DBRol).filter(
-            DBRol.nombre_rol.ilike(rol_data.nombre_rol.strip()),
-            DBRol.rol_id != rol_id
-        ).first()
-        
-        if existing_rol:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Ya existe otro rol con el nombre '{rol_data.nombre_rol}'"
-            )
+    update_data = rol_data.model_dump(exclude_unset=True)
+
+    # Si se está actualizando el nombre, verificar duplicados (case-insensitive y sin espacios)
+    if "nombre_rol" in update_data:
+        nombre_limpio = update_data["nombre_rol"].strip()
+        if nombre_limpio.lower() != db_rol.nombre_rol.lower():
+            existing_rol = db.query(DBRol).filter(
+                DBRol.nombre_rol.ilike(nombre_limpio),
+                DBRol.rol_id != rol_id
+            ).first()
+            
+            if existing_rol:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Ya existe otro rol con el nombre '{nombre_limpio}'"
+                )
+        update_data["nombre_rol"] = nombre_limpio
     
     # ✅ VALIDACIÓN AÑADIDA: No permitir desactivar roles asignados
-    update_data = rol_data.model_dump(exclude_unset=True)
     
     # Si se está intentando desactivar el rol, verificar que no esté asignado
     if 'estado' in update_data and update_data['estado'] == EstadoEnum.inactivo and db_rol.estado == EstadoEnum.activo:
