@@ -10,6 +10,7 @@ from ..database import get_db
 from ..models.persona import Persona as DBPersona
 from ..models.usuario import Usuario as DBUsuario
 from ..models.rol import Rol as DBRol
+from ..models.proveedor import Proveedor as DBProveedor
 from ..models.enums import EstadoEnum, GeneroEnum
 # Importamos los esquemas actualizados
 from ..schemas.persona import PersonaWithRoles, PersonaCreate, PersonaUpdate, PersonaNested, PersonaPagination # <-- ¡CAMBIO AQUÍ! (PersonaPagination)
@@ -81,10 +82,22 @@ def create_persona(
         db.add(new_persona) # Agregamos la persona a la sesión
         db.flush() # Forzamos la obtención del persona_id antes de crear el usuario
 
+        # Sincronización: Si la persona tiene el rol "Proveedor", crear una entrada en la tabla de proveedores.
+        persona_role_names = {rol.nombre_rol for rol in new_persona.roles}
+        if "Proveedor" in persona_role_names:
+            # Verificar si ya existe un proveedor para esta persona para evitar duplicados
+            existing_proveedor = db.query(DBProveedor).filter(DBProveedor.persona_id == new_persona.persona_id).first()
+            if not existing_proveedor:
+                new_proveedor = DBProveedor(
+                    persona_id=new_persona.persona_id,
+                    estado=new_persona.estado  # Sincronizar el estado del proveedor con el de la persona
+                )
+                db.add(new_proveedor)
+
         if persona.usuario_data:
             # Validar que los roles de persona de la nueva_persona permitan ser usuario del sistema
             # Esto es una lógica de negocio clave: solo 'Administrador' o 'Empleado' pueden tener un usuario.
-            persona_role_names = {rol.nombre_rol for rol in new_persona.roles}
+            # Reutilizamos persona_role_names que ya hemos calculado
             if not any(role_name in persona_role_names for role_name in ["Administrador", "Empleado"]):
                  raise HTTPException(
                      status_code=status.HTTP_400_BAD_REQUEST,
@@ -224,6 +237,26 @@ def update_persona(
                     detail=f"Uno o más IDs de rol de persona no son válidos: {list(invalid_role_ids)}"
                 )
             db_persona.roles = roles_to_assign # SQLAlchemy manejará la actualización de la tabla de unión
+
+        # Sincronización: Crear/desactivar proveedor según el rol.
+        persona_role_names = {rol.nombre_rol for rol in db_persona.roles}
+        existing_proveedor = db.query(DBProveedor).filter(DBProveedor.persona_id == db_persona.persona_id).first()
+
+        if "Proveedor" in persona_role_names:
+            if not existing_proveedor:
+                # Si se añade el rol y no hay proveedor, se crea.
+                new_proveedor = DBProveedor(
+                    persona_id=db_persona.persona_id,
+                    estado=db_persona.estado
+                )
+                db.add(new_proveedor)
+            elif existing_proveedor.estado == EstadoEnum.inactivo:
+                # Si el rol existe y el proveedor estaba inactivo, se activa.
+                existing_proveedor.estado = EstadoEnum.activo
+        else:
+            # Si el rol "Proveedor" no está, pero el proveedor existe y está activo, se desactiva.
+            if existing_proveedor and existing_proveedor.estado == EstadoEnum.activo:
+                existing_proveedor.estado = EstadoEnum.inactivo
 
         db.commit()
         db.refresh(db_persona) # Refrescar para asegurar que las relaciones cargadas estén actualizadas

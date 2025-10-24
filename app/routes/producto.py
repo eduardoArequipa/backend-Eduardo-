@@ -111,6 +111,10 @@ def create_producto(
     if db_producto_codigo:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ya existe un producto con este código.")
 
+    db_producto_nombre = db.query(DBProducto).filter(DBProducto.nombre == producto.nombre).first()
+    if db_producto_nombre:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ya existe un producto con este nombre.")
+
     new_producto = DBProducto(**producto.model_dump())
     new_producto.creado_por = current_user.usuario_id
     
@@ -190,6 +194,30 @@ def read_productos(
     return {"items": productos_con_stock_convertido, "total": total}
 
 
+@router.get("/check-field", response_model=dict)
+def check_field_uniqueness(
+    field_name: str = Query(..., description="Nombre del campo a verificar (ej: 'codigo', 'nombre')"),
+    value: str = Query(..., description="Valor del campo a verificar"),
+    producto_id: Optional[int] = Query(None, description="ID del producto a excluir de la verificación (para modo edición)"),
+    db: Session = Depends(get_db),
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/productos"))
+):
+    """
+    Verifica si un valor de campo específico ya existe en la base de datos.
+    """
+    if field_name not in ['codigo', 'nombre']:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nombre de campo no válido. Use 'codigo' o 'nombre'.")
+
+    query = db.query(DBProducto).filter(getattr(DBProducto, field_name).ilike(value))
+
+    if producto_id is not None:
+        query = query.filter(DBProducto.producto_id != producto_id)
+
+    is_unique = not db.query(query.exists()).scalar()
+    
+    return {"is_unique": is_unique}
+
+
 @router.get("/low-stock", response_model=List[Producto])
 def get_low_stock_products(
     db: Session = Depends(get_db),
@@ -265,6 +293,11 @@ def update_producto(
         existing_producto_with_new_code = db.query(DBProducto).filter(DBProducto.codigo == update_data['codigo']).first()
         if existing_producto_with_new_code and existing_producto_with_new_code.producto_id != producto_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ya existe otro producto con este código.")
+
+    if 'nombre' in update_data and update_data['nombre'] != db_producto.nombre:
+        existing_producto_with_new_name = db.query(DBProducto).filter(DBProducto.nombre == update_data['nombre']).first()
+        if existing_producto_with_new_name and existing_producto_with_new_name.producto_id != producto_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ya existe otro producto con este nombre.")
 
     if 'categoria_id' in update_data and update_data['categoria_id'] is not None and update_data['categoria_id'] != db_producto.categoria_id:
         db_categoria = db.query(DBCategoria).filter(DBCategoria.categoria_id == update_data['categoria_id']).first()

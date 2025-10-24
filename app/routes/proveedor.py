@@ -47,11 +47,26 @@ def create_proveedor(
             rol_ids = persona_create_data.pop('rol_ids', [])
             persona_create_data.pop('usuario_data', None) # Eliminar usuario_data
 
+            # Validaciones para Persona
             if persona_create_data.get('ci'):
                 db_persona_ci = db.query(DBPersona).filter(DBPersona.ci == persona_create_data['ci']).first()
                 if db_persona_ci:
-                     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Ya existe una persona con este CI: {persona_create_data['ci']}")
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Ya existe una persona con este CI: {persona_create_data['ci']}")
+
+            if persona_create_data.get('email'):
+                db_persona_email = db.query(DBPersona).filter(DBPersona.email == persona_create_data['email']).first()
+                if db_persona_email:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Ya existe una persona con este email: {persona_create_data['email']}")
             
+            # Validar combinación única de nombre y apellidos
+            db_persona_nombre = db.query(DBPersona).filter(
+                DBPersona.nombre == persona_create_data.get('nombre'),
+                DBPersona.apellido_paterno == persona_create_data.get('apellido_paterno'),
+                DBPersona.apellido_materno == persona_create_data.get('apellido_materno')
+            ).first()
+            if db_persona_nombre:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ya existe una persona con el mismo nombre completo.")
+
             new_persona = DBPersona(**persona_create_data)
 
             if rol_ids:
@@ -61,24 +76,28 @@ def create_proveedor(
                 new_persona.roles = roles
 
             db.add(new_persona)
-            db.flush() # Obtener el ID de la nueva persona
-
+            db.flush()
             proveedor_id_to_associate = new_persona.persona_id
 
         elif proveedor_data.empresa_data:
-            # Opción 2: Crear una nueva Empresa y asociarla
             is_persona = False
-            # Validar unicidad de Identificacion si no lo hace la DB o necesitas un error más específico
-            if proveedor_data.empresa_data.identificacion:
-                 db_empresa_identificacion = db.query(DBEmpresa).filter(DBEmpresa.identificacion == proveedor_data.empresa_data.identificacion).first()
-                 if db_empresa_identificacion:
-                      raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Ya existe una empresa con esta Identificación: {proveedor_data.empresa_data.identificacion}")
+            empresa_create_data = proveedor_data.empresa_data.model_dump(exclude_unset=True)
 
-            # Crear la nueva Empresa
-            new_empresa = DBEmpresa(**proveedor_data.empresa_data.model_dump(exclude_unset=True))
+            # Validar unicidad de Razón Social
+            if empresa_create_data.get('razon_social'):
+                db_empresa_razon = db.query(DBEmpresa).filter(DBEmpresa.razon_social == empresa_create_data['razon_social']).first()
+                if db_empresa_razon:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Ya existe una empresa con la misma Razón Social: {empresa_create_data['razon_social']}")
+
+            # Validar unicidad de Identificación
+            if empresa_create_data.get('identificacion'):
+                db_empresa_identificacion = db.query(DBEmpresa).filter(DBEmpresa.identificacion == empresa_create_data['identificacion']).first()
+                if db_empresa_identificacion:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Ya existe una empresa con esta Identificación: {empresa_create_data['identificacion']}")
+
+            new_empresa = DBEmpresa(**empresa_create_data)
             db.add(new_empresa)
-            db.flush() # Obtener el ID de la nueva empresa
-
+            db.flush()
             proveedor_id_to_associate = new_empresa.empresa_id
 
         elif proveedor_data.persona_id is not None:

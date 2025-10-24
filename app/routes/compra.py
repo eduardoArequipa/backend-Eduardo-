@@ -178,14 +178,9 @@ def create_compra(
                     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"La presentación de compra '{detalle_data.presentacion_compra}' no es válida o no está habilitada para compras en el producto '{db_producto.nombre}'.")
 
             precio_unitario_final = detalle_data.precio_unitario
-            if precio_unitario_final is None or precio_unitario_final == Decimal(0):
-                if db_producto.precio_compra is not None:
-                    precio_unitario_final = db_producto.precio_compra
-                else:
-                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"El producto '{db_producto.nombre}' (ID: {db_producto.producto_id}) no tiene un precio de compra definido.")
             
-            if precio_unitario_final < 0:
-                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"El precio unitario final para el producto ID {detalle_data.producto_id} no puede ser negativo.")
+            if precio_unitario_final is None or precio_unitario_final <= 0:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"El precio de compra para el producto '{db_producto.nombre}' (ID: {db_producto.producto_id}) debe ser un valor positivo.")
 
             subtotal_detalle = detalle_data.cantidad * precio_unitario_final
             total_compra += subtotal_detalle
@@ -407,11 +402,8 @@ def update_compra(
                         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Presentación '{detalle_data.presentacion_compra}' no válida o no está habilitada para compras en '{db_producto.nombre}'.")
 
                 precio_unitario = detalle_data.precio_unitario
-                if precio_unitario is None or precio_unitario == Decimal(0):
-                    if db_producto.precio_compra is not None:
-                        precio_unitario = db_producto.precio_compra
-                    else:
-                        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"El producto '{db_producto.nombre}' no tiene un precio de compra definido.")
+                if precio_unitario is None or precio_unitario <= 0:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"El precio de compra para el producto '{db_producto.nombre}' debe ser un valor positivo.")
 
                 new_total += detalle_data.cantidad * precio_unitario
                 new_detalles.append(DBDetalleCompra(**detalle_data.model_dump()))
@@ -541,17 +533,20 @@ def completar_compra(
             if not db_producto:
                 continue
 
-            conversion_factor = Decimal(1)
-            # El precio guardado en el detalle es el costo de la presentación (ej: precio de la caja)
-            precio_presentacion = Decimal(str(detalle.precio_unitario))
+            db_producto = detalle.producto
+            if not db_producto:
+                continue
 
+            conversion_factor = Decimal(1)
+            # Define precio_presentacion_detalle here, before any conditional blocks
+            precio_presentacion_detalle = Decimal(str(detalle.precio_unitario)) # This is the price paid for THIS presentation in THIS purchase
+
+            # Determine conversion factor for the current detail's presentation
             if detalle.presentacion_compra and detalle.presentacion_compra != 'Unidad':
                 presentacion_nombre = detalle.presentacion_compra.strip()
-                # Ahora busca una conversión que sea válida para compras
                 conversion = next((c for c in db_producto.conversiones if c.nombre_presentacion.lower() == presentacion_nombre.lower() and c.es_para_compra), None)
                 
                 if conversion:
-                    # Asegurarse de que el factor de conversión no sea cero
                     if conversion.unidades_por_presentacion > 0:
                         conversion_factor = Decimal(conversion.unidades_por_presentacion)
                     else:
@@ -565,9 +560,21 @@ def completar_compra(
                         detail=f"La presentación '{detalle.presentacion_compra}' no es válida o no está habilitada para compras en el producto '{db_producto.nombre}'."
                     )
             
+            # Calculate old price per presentation BEFORE updating the product
+            old_precio_compra_base = db_producto.precio_compra if db_producto.precio_compra is not None else Decimal(0)
+            old_precio_por_presentacion = old_precio_compra_base * conversion_factor
+
+            # Store old values for audit log del producto
+            old_product_values = {
+                "precio_compra_base_anterior": float(old_precio_compra_base),
+                "precio_venta_base_anterior": float(db_producto.precio_venta) if db_producto.precio_venta is not None else None,
+                "stock_anterior": float(db_producto.stock) if db_producto.stock is not None else 0,
+                "presentacion_comprada": detalle.presentacion_compra,
+                "precio_por_presentacion_anterior": float(old_precio_por_presentacion)
+            }
 
             # 1. Calcular el nuevo costo por unidad base
-            nuevo_precio_compra_unitario = precio_presentacion / conversion_factor
+            nuevo_precio_compra_unitario = precio_presentacion_detalle / conversion_factor # This now correctly uses the defined variable
 
             # 2. Calcular la cantidad total de unidades base a añadir al stock
             stock_to_add = Decimal(detalle.cantidad) * conversion_factor
@@ -581,9 +588,45 @@ def completar_compra(
             # 5. Recalcular precio de venta automáticamente
             db_producto.actualizar_precio_venta_automatico()
 
-            # --- FIN DE LA NUEVA LÓGICA ---
-
             db.add(db_producto)
+            db.flush()
+
+            # Capture new values for audit log del producto
+            new_product_values = {
+                "precio_compra_base_nuevo": float(db_producto.precio_compra),
+                "precio_venta_base_nuevo": float(db_producto.precio_venta),
+                "stock_nuevo": float(db_producto.stock),
+                "presentacion_comprada": detalle.presentacion_compra,
+                "precio_por_presentacion_nuevo": float(precio_presentacion_detalle)
+            }
+
+            # Log the update for the PRODUCT if anything changed
+            
+            # Check if the base purchase price changed OR the price for the specific presentation changed
+            if old_product_values["precio_compra_base_anterior"] != new_product_values["precio_compra_base_nuevo"] or \
+               old_product_values["precio_por_presentacion_anterior"] != new_product_values["precio_por_presentacion_nuevo"] or \
+               old_product_values["stock_anterior"] != new_product_values["stock_nuevo"]:
+                
+                descripcion_auditoria = f"Actualización de producto '{db_producto.nombre}' por completado de compra ID: {compra_id}. "
+                if old_product_values["precio_por_presentacion_anterior"] != new_product_values["precio_por_presentacion_nuevo"]:
+                    descripcion_auditoria += f"Precio de '{detalle.presentacion_compra}' cambió de {old_product_values['precio_por_presentacion_anterior']:.2f} a {new_product_values['precio_por_presentacion_nuevo']:.2f} Bs. " # Fixed quotes here
+                if old_product_values["precio_compra_base_anterior"] != new_product_values["precio_compra_base_nuevo"]:
+                    descripcion_auditoria += f"Precio base de compra cambió de {old_product_values['precio_compra_base_anterior']:.2f} a {new_product_values['precio_compra_base_nuevo']:.2f} Bs. " # Fixed quotes here
+                if old_product_values["stock_anterior"] != new_product_values["stock_nuevo"]:
+                    descripcion_auditoria += f"Stock cambió de {old_product_values['stock_anterior']:.2f} a {new_product_values['stock_nuevo']:.2f}. " # Fixed quotes here
+
+                AuditService.log_update(
+                    db=db,
+                    tabla="productos",
+                    registro_id=db_producto.producto_id,
+                    valores_antes=old_product_values,
+                    valores_despues=new_product_values,
+                    usuario_id=current_user.usuario_id,
+                    request=request,
+                    descripcion=descripcion_auditoria
+                )
+
+            # --- FIN DE LA NUEVA LÓGICA ---
 
         # Cambiar estado de compra a completada
         db_compra.estado = EstadoCompraEnum.completada

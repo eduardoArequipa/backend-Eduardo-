@@ -166,10 +166,13 @@ class AuditService:
         valores_antes: Dict[str, Any],
         valores_despues: Dict[str, Any],
         usuario_id: Optional[int] = None,
-        request: Optional[Request] = None
+        request: Optional[Request] = None,
+        descripcion: Optional[str] = None
     ) -> AuditLog:
         """Registra la actualización de un registro"""
-        descripcion = f"{tabla[:-1].capitalize()} actualizado"  # usuarios -> Usuario
+        # Si no se proporciona una descripción personalizada, usar la descripción por defecto
+        if descripcion is None:
+            descripcion = f"{tabla[:-1].capitalize()} actualizado"  # usuarios -> Usuario
 
         return AuditService.log_action(
             db=db,

@@ -11,6 +11,7 @@ from ..models.usuario import Usuario as DBUsuario # Alias para el modelo de la B
 from ..models.persona import Persona as DBPersona # Importar Persona
 from ..models.rol import Rol as DBRol # Importar Rol
 from ..models.enums import EstadoEnum
+from ..models.proveedor import Proveedor as DBProveedor
 from ..schemas.usuario import UsuarioCreate, UsuarioUpdate, UsuarioReadAudit, Usuario as UsuarioSchema, UsuarioPagination # Importamos los esquemas
 
 router = APIRouter(
@@ -96,7 +97,9 @@ def read_usuarios(
 @router.get("/{usuario_id}", response_model=UsuarioReadAudit)
 def read_usuario(
     usuario: DBUsuario = Depends(get_usuario_or_404),
-    current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/usuarios")) # Verificar acceso al menú de categorías
+   # current_user: auth_utils.Usuario = Depends(auth_utils.require_menu_access("/usuarios")) # Verificar acceso al menú de categorías
+    current_user: auth_utils.Usuario = Depends(auth_utils.require_authenticated_user)
+
 ):
     """
     Obtiene los detalles de un usuario específico.
@@ -282,6 +285,18 @@ def assign_role_to_user(
     if db_rol in db_usuario.persona.roles: # CORRECCIÓN: Verifica en los roles de la PERSONA
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La persona del usuario ya tiene este rol asignado.")
     
+    # Sincronización: Si el rol asignado es "Proveedor", crear o activar el proveedor asociado.
+    if db_rol.nombre_rol == "Proveedor":
+        proveedor = db.query(DBProveedor).filter(DBProveedor.persona_id == db_usuario.persona.persona_id).first()
+        if not proveedor:
+            new_proveedor = DBProveedor(
+                persona_id=db_usuario.persona.persona_id,
+                estado=db_usuario.persona.estado # Sincronizar estado con la persona
+            )
+            db.add(new_proveedor)
+        elif proveedor.estado == EstadoEnum.inactivo:
+            proveedor.estado = EstadoEnum.activo
+    
     db_usuario.persona.roles.append(db_rol) # CORRECCIÓN: Añade el rol a la PERSONA del usuario
     db.commit()
     db.refresh(db_usuario) # Refresca para cargar los roles actualizados
@@ -298,6 +313,13 @@ def remove_role_from_user(
     Remueve un rol específico de la PERSONA asociada a un usuario.
     Solo accesible para usuarios con roles de gestión de roles de usuario (Administrador).
     """
+    # Verificación para prevenir que un usuario se quite sus propios roles
+    if db_usuario.usuario_id == current_user.usuario_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No puedes remover tus propios roles para prevenir un auto-bloqueo."
+        )
+
     db_rol = db.query(DBRol).filter(DBRol.rol_id == rol_id).first()
     if not db_rol:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rol no encontrado.")
@@ -307,6 +329,12 @@ def remove_role_from_user(
 
     if db_rol not in db_usuario.persona.roles: # CORRECCIÓN: Verifica en los roles de la PERSONA
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La persona del usuario no tiene este rol asignado.")
+
+    # Sincronización: Si el rol removido es "Proveedor", desactivar el proveedor asociado.
+    if db_rol.nombre_rol == "Proveedor":
+        proveedor = db.query(DBProveedor).filter(DBProveedor.persona_id == db_usuario.persona.persona_id).first()
+        if proveedor and proveedor.estado == EstadoEnum.activo:
+            proveedor.estado = EstadoEnum.inactivo
 
     db_usuario.persona.roles.remove(db_rol) # CORRECCIÓN: Remueve el rol de la PERSONA del usuario
     db.commit()
