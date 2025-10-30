@@ -128,12 +128,16 @@ async def crear_factura_tesabiz(venta_id: int, db: Session):
             factura_db.tesabiz_id = proceso_respuesta.get("idDocFiscalFEEL")
             factura_db.detalles_respuesta = json.dumps(respuesta_tesabiz)
 
-            if str(codigo_recepcion) == "908" and cuf:
+            # La presencia de un CUF es el indicador definitivo de éxito,
+            # especialmente en modo 'fuera de línea'.
+            if cuf:
                 factura_db.estado = "VALIDADA"
-                print("[FACTURACION] -> Estado determinado: VALIDADA")
+                print("[FACTURACION] -> Estado determinado: VALIDADA (CUF recibido)")
             else:
                 factura_db.estado = "RECHAZADA"
-                print(f"[FACTURACION] -> Estado determinado: RECHAZADA (Código no es 908 o falta CUF)")
+                # Mantenemos el log original para otros casos de rechazo.
+                codigo_recepcion_str = str(codigo_recepcion) if codigo_recepcion else "N/A"
+                print(f"[FACTURACION] -> Estado determinado: RECHAZADA (Código: {codigo_recepcion_str}, Falta CUF)")
             db.commit()
         else:
             # Caso de Error (Respuesta sin objeto 'proceso')
@@ -148,6 +152,13 @@ async def crear_factura_tesabiz(venta_id: int, db: Session):
         
         print(f"[FACTURACION] 4. Factura ID {factura_db.factura_id} actualizada en la BD. Proceso completado.")
 
+        if factura_db.cuf:
+                link_construido = f"https://pilotosiat.impuestos.gob.bo/consulta/QR?nit=1028341029&cuf={factura_db.cuf}&numero={factura_db.factura_id}&t=2"
+                print(f"🔗 LINK FACTURA PILOTSIAT (construido): {link_construido}")
+        else:
+                print("ℹ️  No se pudo generar link - CUF no disponible")
+
+  
     except Exception as e:
         print(f"[FACTURACION] !!! ERROR !!! Ha ocurrido un error durante el proceso: {e}")
         factura_db.estado = "ERROR"

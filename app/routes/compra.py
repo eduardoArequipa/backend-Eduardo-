@@ -105,7 +105,7 @@ def notify_proveedor(db: Session, compra_id: int, proveedor_id: int, total: Deci
         for i, detalle in enumerate(db_compra.detalles):
             # Asegúrate de que el producto está cargado y tiene nombre
             producto_nombre = detalle.producto.nombre if detalle.producto else "Producto Desconocido"
-            mensaje += f"{i+1}. {producto_nombre} - Cantidad: {detalle.cantidad} - Precio Unitario: {detalle.precio_unitario:.2f}\n"
+            mensaje += f"{i+1}. {producto_nombre} - Cantidad: {detalle.cantidad:.1f}- {detalle.presentacion_compra} - Precio Unitario: {detalle.precio_unitario:.2f} bs\n"
     else:
         mensaje += "Esta compra no tiene detalles de productos.\n"
 
@@ -505,7 +505,7 @@ def completar_compra(
 ):
     """
     Marca una Compra como 'completada', actualiza el stock y el precio de compra
-    de los productos asociados, utilizando la lógica de conversión de unidades.
+    de los productos asociados, utilizando PROMEDIO PONDERADO para múltiples presentaciones.
     """
     db_compra = db.query(DBCompra).options(
         joinedload(DBCompra.detalles).joinedload(DBDetalleCompra.producto).joinedload(DBProducto.conversiones)
@@ -528,29 +528,38 @@ def completar_compra(
     try:
         db.begin_nested()
 
+        # ✅ PASO 1: Agrupar detalles por producto_id para calcular promedio ponderado
+        productos_procesados = {}  # {producto_id: {total_costo, total_unidades, detalles: []}}
+
         for detalle in db_compra.detalles:
             db_producto = detalle.producto
             if not db_producto:
                 continue
 
-            db_producto = detalle.producto
-            if not db_producto:
-                continue
+            producto_id = db_producto.producto_id
 
+            # Inicializar si es la primera vez que vemos este producto
+            if producto_id not in productos_procesados:
+                productos_procesados[producto_id] = {
+                    "producto": db_producto,
+                    "total_costo": Decimal(0),
+                    "total_unidades": Decimal(0),
+                    "detalles": []
+                }
+
+            # Calcular factor de conversión para este detalle
             conversion_factor = Decimal(1)
-            # Define precio_presentacion_detalle here, before any conditional blocks
-            precio_presentacion_detalle = Decimal(str(detalle.precio_unitario)) # This is the price paid for THIS presentation in THIS purchase
-
-            # Determine conversion factor for the current detail's presentation
             if detalle.presentacion_compra and detalle.presentacion_compra != 'Unidad':
                 presentacion_nombre = detalle.presentacion_compra.strip()
-                conversion = next((c for c in db_producto.conversiones if c.nombre_presentacion.lower() == presentacion_nombre.lower() and c.es_para_compra), None)
+                conversion = next((c for c in db_producto.conversiones 
+                                 if c.nombre_presentacion.lower() == presentacion_nombre.lower() 
+                                 and c.es_para_compra), None)
                 
                 if conversion:
                     if conversion.unidades_por_presentacion > 0:
                         conversion_factor = Decimal(conversion.unidades_por_presentacion)
                     else:
-                         raise HTTPException(
+                        raise HTTPException(
                             status_code=status.HTTP_400_BAD_REQUEST,
                             detail=f"El factor de conversión para la presentación '{detalle.presentacion_compra}' del producto '{db_producto.nombre}' es cero."
                         )
@@ -559,85 +568,103 @@ def completar_compra(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"La presentación '{detalle.presentacion_compra}' no es válida o no está habilitada para compras en el producto '{db_producto.nombre}'."
                     )
-            
-            # Calculate old price per presentation BEFORE updating the product
-            old_precio_compra_base = db_producto.precio_compra if db_producto.precio_compra is not None else Decimal(0)
-            old_precio_por_presentacion = old_precio_compra_base * conversion_factor
 
-            # Store old values for audit log del producto
+            # Calcular cantidad de unidades y costo total para este detalle
+            cantidad_unidades = Decimal(detalle.cantidad) * conversion_factor
+            costo_detalle = Decimal(detalle.cantidad) * Decimal(detalle.precio_unitario)
+
+            # Acumular en el producto
+            productos_procesados[producto_id]["total_unidades"] += cantidad_unidades
+            productos_procesados[producto_id]["total_costo"] += costo_detalle
+            productos_procesados[producto_id]["detalles"].append({
+                "presentacion": detalle.presentacion_compra,
+                "cantidad": detalle.cantidad,
+                "precio_unitario": detalle.precio_unitario,
+                "unidades_convertidas": cantidad_unidades,
+                "costo_detalle": costo_detalle
+            })
+
+        # ✅ PASO 2: Procesar cada producto con su promedio ponderado
+        for producto_id, data in productos_procesados.items():
+            db_producto = data["producto"]
+            total_unidades = data["total_unidades"]
+            total_costo = data["total_costo"]
+
+            # Guardar valores anteriores para auditoría
+            old_precio_compra_base = db_producto.precio_compra if db_producto.precio_compra is not None else Decimal(0)
+            old_stock = db_producto.stock if db_producto.stock is not None else Decimal(0)
+            old_precio_venta = db_producto.precio_venta if db_producto.precio_venta is not None else Decimal(0)
+
             old_product_values = {
                 "precio_compra_base_anterior": float(old_precio_compra_base),
-                "precio_venta_base_anterior": float(db_producto.precio_venta) if db_producto.precio_venta is not None else None,
-                "stock_anterior": float(db_producto.stock) if db_producto.stock is not None else 0,
-                "presentacion_comprada": detalle.presentacion_compra,
-                "precio_por_presentacion_anterior": float(old_precio_por_presentacion)
+                "precio_venta_base_anterior": float(old_precio_venta),
+                "stock_anterior": float(old_stock),
+                "total_unidades_compradas": float(total_unidades),
+                "total_costo_compra": float(total_costo)
             }
 
-            # 1. Calcular el nuevo costo por unidad base
-            nuevo_precio_compra_unitario = precio_presentacion_detalle / conversion_factor # This now correctly uses the defined variable
+            # ✅ Calcular nuevo precio de compra usando PROMEDIO PONDERADO
+            if total_unidades > 0:
+                nuevo_precio_compra_unitario = total_costo / total_unidades
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"No se puede calcular el precio para '{db_producto.nombre}': total de unidades es cero."
+                )
 
-            # 2. Calcular la cantidad total de unidades base a añadir al stock
-            stock_to_add = Decimal(detalle.cantidad) * conversion_factor
-
-            # 3. Actualizar el stock del producto
-            db_producto.stock = (db_producto.stock or Decimal(0)) + stock_to_add
-
-            # 4. ACTUALIZAR PRECIO DE COMPRA AL ÚLTIMO PRECIO (sin promedio ponderado)
+            # Actualizar el producto
+            db_producto.stock = old_stock + total_unidades
             db_producto.precio_compra = nuevo_precio_compra_unitario
 
-            # 5. Recalcular precio de venta automáticamente
+            # Recalcular precio de venta automáticamente
             db_producto.actualizar_precio_venta_automatico()
 
             db.add(db_producto)
             db.flush()
 
-            # Capture new values for audit log del producto
+            # Guardar valores nuevos para auditoría
             new_product_values = {
-                "precio_compra_base_nuevo": float(db_producto.precio_compra),
+                "precio_compra_base_nuevo": float(nuevo_precio_compra_unitario),
                 "precio_venta_base_nuevo": float(db_producto.precio_venta),
                 "stock_nuevo": float(db_producto.stock),
-                "presentacion_comprada": detalle.presentacion_compra,
-                "precio_por_presentacion_nuevo": float(precio_presentacion_detalle)
+                "total_unidades_compradas": float(total_unidades),
+                "total_costo_compra": float(total_costo)
             }
 
-            # Log the update for the PRODUCT if anything changed
+            # ✅ Log detallado de cambios
+            descripcion_auditoria = f"Actualización de producto '{db_producto.nombre}' por completado de compra ID: {compra_id}. "
             
-            # Check if the base purchase price changed OR the price for the specific presentation changed
-            if old_product_values["precio_compra_base_anterior"] != new_product_values["precio_compra_base_nuevo"] or \
-               old_product_values["precio_por_presentacion_anterior"] != new_product_values["precio_por_presentacion_nuevo"] or \
-               old_product_values["stock_anterior"] != new_product_values["stock_nuevo"]:
-                
-                descripcion_auditoria = f"Actualización de producto '{db_producto.nombre}' por completado de compra ID: {compra_id}. "
-                if old_product_values["precio_por_presentacion_anterior"] != new_product_values["precio_por_presentacion_nuevo"]:
-                    descripcion_auditoria += f"Precio de '{detalle.presentacion_compra}' cambió de {old_product_values['precio_por_presentacion_anterior']:.2f} a {new_product_values['precio_por_presentacion_nuevo']:.2f} Bs. " # Fixed quotes here
-                if old_product_values["precio_compra_base_anterior"] != new_product_values["precio_compra_base_nuevo"]:
-                    descripcion_auditoria += f"Precio base de compra cambió de {old_product_values['precio_compra_base_anterior']:.2f} a {new_product_values['precio_compra_base_nuevo']:.2f} Bs. " # Fixed quotes here
-                if old_product_values["stock_anterior"] != new_product_values["stock_nuevo"]:
-                    descripcion_auditoria += f"Stock cambió de {old_product_values['stock_anterior']:.2f} a {new_product_values['stock_nuevo']:.2f}. " # Fixed quotes here
+            if old_product_values["precio_compra_base_anterior"] != new_product_values["precio_compra_base_nuevo"]:
+                descripcion_auditoria += f"Precio base de compra cambió de {old_product_values['precio_compra_base_anterior']:.2f} a {new_product_values['precio_compra_base_nuevo']:.2f} Bs (promedio ponderado de {len(data['detalles'])} presentación/es). "
+            
+            if old_product_values["stock_anterior"] != new_product_values["stock_nuevo"]:
+                descripcion_auditoria += f"Stock cambió de {old_product_values['stock_anterior']:.2f} a {new_product_values['stock_nuevo']:.2f} unidades. "
+            
+            if old_product_values["precio_venta_base_anterior"] != new_product_values["precio_venta_base_nuevo"]:
+                descripcion_auditoria += f"Precio venta recalculado de {old_product_values['precio_venta_base_anterior']:.2f} a {new_product_values['precio_venta_base_nuevo']:.2f} Bs. "
 
-                AuditService.log_update(
-                    db=db,
-                    tabla="productos",
-                    registro_id=db_producto.producto_id,
-                    valores_antes=old_product_values,
-                    valores_despues=new_product_values,
-                    usuario_id=current_user.usuario_id,
-                    request=request,
-                    descripcion=descripcion_auditoria
-                )
+            # Agregar detalles de las presentaciones
+            if len(data['detalles']) > 1:
+                descripcion_auditoria += f"Detalles: "
+                for i, det in enumerate(data['detalles'], 1):
+                    descripcion_auditoria += f"[{i}] {det['presentacion']}: {det['cantidad']} × {det['precio_unitario']:.2f} Bs = {det['costo_detalle']:.2f} Bs ({det['unidades_convertidas']:.0f} unid). "
 
-            # --- FIN DE LA NUEVA LÓGICA ---
+            AuditService.log_update(
+                db=db,
+                tabla="productos",
+                registro_id=db_producto.producto_id,
+                valores_antes=old_product_values,
+                valores_despues=new_product_values,
+                usuario_id=current_user.usuario_id,
+                request=request,
+                descripcion=descripcion_auditoria
+            )
 
-        # Cambiar estado de compra a completada
+        # ✅ PASO 3: Cambiar estado de compra a completada
         db_compra.estado = EstadoCompraEnum.completada
-        db_compra.modificado_por = current_user.usuario_id 
+        db_compra.modificado_por = current_user.usuario_id
 
-        # Hacer commit de los cambios (stock y precios ya actualizados arriba)
         db.commit()
-
-        # Nota: Ya no usamos PrecioService.actualizar_precios_por_compra()
-        # porque ahora actualizamos directamente al último precio de compra
-
         db.refresh(db_compra)
 
         # Log de auditoría para completar compra
@@ -651,6 +678,7 @@ def completar_compra(
             request=request
         )
 
+        logger.info(f"Compra #{compra_id} completada exitosamente. Productos procesados: {len(productos_procesados)}")
         return db_compra
 
     except HTTPException as e:
