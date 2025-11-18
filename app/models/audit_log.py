@@ -13,7 +13,7 @@ class AuditLog(Base):
     log_id = Column(Integer, primary_key=True, index=True)
     usuario_id = Column(Integer, ForeignKey('usuarios.usuario_id', ondelete='SET NULL'), nullable=True)
     tabla = Column(String(50), nullable=False, index=True)  # 'usuarios', 'productos', etc.
-    accion = Column(String(10), nullable=False, index=True)  # 'CREATE', 'UPDATE', 'DELETE', 'LOGIN'
+    accion = Column(String(50), nullable=False, index=True)  # 'CREATE', 'UPDATE', 'DELETE', 'LOGIN'
     registro_id = Column(Integer, nullable=True)  # ID del registro afectado
 
     # Datos del cambio

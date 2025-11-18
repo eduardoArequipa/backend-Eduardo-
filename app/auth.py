@@ -22,11 +22,10 @@ from .schemas.token import TokenData
 from .models.rol import Rol 
 RECOVERY_CODE_EXPIRE_MINUTES = int(os.getenv("RECOVERY_CODE_EXPIRE_MINUTES", 15))
 
-# Configuración de seguridad
-# Asegúrate de que estas variables de entorno estén configuradas en tu archivo .env
+
 SECRET_KEY = os.getenv("SECRET_KEY")
-ALGORITHM = os.getenv("ALGORITHM", "HS256") # Default a HS256 si no está en .env
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 1)) # Default 30 minutos
+ALGORITHM = os.getenv("ALGORITHM", "HS256") 
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 1)) 
 
 EMAIL_SENDER = os.getenv("EMAIL_SENDER") # Tu dirección de correo, ej: "tu_correo@gmail.com"
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD") # La contraseña de tu correo o contraseña de aplicación

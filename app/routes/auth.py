@@ -5,32 +5,29 @@ from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel, Field, EmailStr
-from sqlalchemy.orm import Session, joinedload # Importar joinedload para cargar relaciones
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session, joinedload
 
-from .. import auth as auth_utils # Asumimos que auth_utils es app/auth.py
+from .. import auth as auth_utils
 from ..database import get_db
 from ..schemas.token import Token
-from ..schemas.usuario import UsuarioReadAudit # Usamos este esquema para /me
+from ..schemas.usuario import UsuarioReadAudit
 from ..schemas.menu import MenuInDB
-from ..models.persona import Persona as DBPersona # Ya está importado, es correcto
-from ..models.usuario import Usuario # Asegúrate de importar el modelo Usuario explícitamente si auth_utils.Usuario es solo un alias
-from ..models.menu import Menu as DBMenu
-from ..models.rol import Rol as DBRol # Importar Rol
-from ..models.enums import EstadoEnum # Asegúrate de que EstadoEnum esté importado correctamente
-from ..services.audit_service import AuditService
-    # Buscar todos los menús que tienen relación con estos roles
+from ..models.persona import Persona as DBPersona
+from ..models.usuario import Usuario
 from ..models.menu import Menu
-from ..models.rol_menu import RolMenu
 from ..models.rol import Rol
-from sqlalchemy.orm import joinedload
+from ..models.rol_menu import RolMenu
+from ..models.enums import EstadoEnum
+from ..services.audit_service import AuditService
+
 router = APIRouter(
     prefix="/auth",
     tags=["Auth"]
 )
 
 MAX_FAILED_ATTEMPTS = 3
-LOCKOUT_TIME_MINUTES = 15
+LOCKOUT_TIME_MINUTES = 2
 
 class ForgotPasswordRequest(BaseModel):
     username_or_email: str
@@ -40,16 +37,6 @@ class ResetPasswordRequest(BaseModel):
     recovery_code: str
     new_password: str = Field(..., min_length=6, description="La nueva contraseña debe tener al menos 6 caracteres.")
 
-def make_datetime_utc_aware(dt: Optional[datetime]) -> Optional[datetime]:
-    """
-    Convierte un datetime naive (sin zona horaria) a UTC aware.
-    Si ya es aware o None, lo devuelve tal cual.
-    """
-    if dt and dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt
-
-# Endpoint de login usando form-data
 @router.post("/login", response_model=Token)
 def login_for_access_token(
     request: Request,
@@ -60,26 +47,16 @@ def login_for_access_token(
     Autentica un usuario y devuelve un token de acceso JWT.
     Implementa el bloqueo de cuenta por intentos fallidos.
     """
-    print(f"\n--- Intento de Login para usuario: {form_data.username} ---")
-
-    # Cargar el usuario, incluyendo su persona asociada y sus roles a través de la persona
-    # Aquí está la corrección clave:
-    user = db.query(Usuario).options( # Usar directamente el modelo Usuario si está importado
-        joinedload(Usuario.persona).joinedload(DBPersona.roles).joinedload(DBRol.menus) # <-- ¡CORREGIDO AQUÍ!
+    user = db.query(Usuario).options(
+        joinedload(Usuario.persona).joinedload(DBPersona.roles).joinedload(Rol.menus)
     ).filter(Usuario.nombre_usuario == form_data.username).first()
 
     if not user:
-        print(f"DEBUG: Usuario '{form_data.username}' no encontrado.")
-        # Log de intento de login con usuario inexistente
         AuditService.log_action(
             db=db,
             tabla="usuarios",
             accion="LOGIN_FAILED",
-            valores_despues={
-                "usuario_intentado": form_data.username,
-                "resultado": "usuario_inexistente",
-                "timestamp": datetime.now(timezone.utc).isoformat()
-            },
+            valores_despues={"usuario_intentado": form_data.username, "resultado": "usuario_inexistente"},
             request=request,
             descripcion=f"Intento de login con usuario inexistente: {form_data.username}"
         )
@@ -89,224 +66,136 @@ def login_for_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Asegurarse de que el campo `bloqueado_hasta` sea timezone-aware para la comparación
-    user_bloqueado_hasta_aware = make_datetime_utc_aware(user.bloqueado_hasta)
-    current_utc_time = datetime.now(timezone.utc)
+    # --- Verificación de Estado del Usuario (usando datetimes naive UTC) ---
+    current_utc_naive = datetime.utcnow()
 
-    if user_bloqueado_hasta_aware and user_bloqueado_hasta_aware > current_utc_time:
-        remaining_time_seconds = (user_bloqueado_hasta_aware - current_utc_time).total_seconds()
-        minutes = int(remaining_time_seconds // 60)
-        seconds = int(remaining_time_seconds % 60)
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Usuario bloqueado. Inténtelo de nuevo en {minutes} minuto(s) y {seconds} segundo(s).",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    if user.estado == EstadoEnum.bloqueado:
+        if user.bloqueado_hasta and user.bloqueado_hasta > current_utc_naive:
+            remaining_time = user.bloqueado_hasta - current_utc_naive
+            minutes = int(remaining_time.total_seconds() // 60)
+            seconds = int(remaining_time.total_seconds() % 60)
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Usuario bloqueado. Inténtelo de nuevo en {minutes} minuto(s) y {seconds} segundo(s).",
+            )
+        else:
+            # El tiempo de bloqueo ha expirado, se marca como activo para el intento actual
+            user.estado = EstadoEnum.activo
+            user.intentos_fallidos = 0
+            user.bloqueado_hasta = None
 
-    if user.estado != EstadoEnum.activo: # Usa EstadoEnum directamente si lo importaste
+    if user.estado == EstadoEnum.inactivo:
          raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Usuario inactivo o bloqueado",
-            headers={"WWW-Authenticate": "Bearer"},
+            detail="La cuenta de usuario se encuentra inactiva. Comuníquese con un administrador.",
         )
 
+    # --- Verificación de Contraseña ---
     if not auth_utils.verify_password(form_data.password, user.contraseña):
+        # Contraseña Incorrecta
         user.intentos_fallidos = (user.intentos_fallidos or 0) + 1
+        is_being_locked = user.intentos_fallidos >= MAX_FAILED_ATTEMPTS
+        
+        if is_being_locked:
+            user.estado = EstadoEnum.bloqueado
+            user.bloqueado_hasta = datetime.utcnow() + timedelta(minutes=LOCKOUT_TIME_MINUTES)
+
         try:
             db.add(user)
             db.commit()
             db.refresh(user)
         except Exception as e:
             db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error interno del servidor al actualizar intentos de login."
-            )
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error interno del servidor al actualizar intentos de login.")
 
-        if user.intentos_fallidos >= MAX_FAILED_ATTEMPTS:
-            user.estado = EstadoEnum.bloqueado # Usa EstadoEnum directamente
-            user.bloqueado_hasta = datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_TIME_MINUTES) # Almacenar como timezone-aware
-            try:
-                db.add(user)
-                db.commit()
-                db.refresh(user)
-                print(f"DEBUG: Bloqueo de usuario guardado y refrescado. Estado final: {user.estado}")
-            except Exception as e:
-                db.rollback()
-                print(f"ERROR: Fallo al bloquear usuario: {e}")
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Error interno del servidor al bloquear el usuario."
-                )
-
-        # Log de login fallido por contraseña incorrecta
         AuditService.log_action(
             db=db,
             tabla="usuarios",
             accion="LOGIN_FAILED",
             usuario_id=user.usuario_id,
             registro_id=user.usuario_id,
-            valores_despues={
-                "usuario": user.nombre_usuario,
-                "resultado": "contraseña_incorrecta",
-                "intentos_fallidos": user.intentos_fallidos,
-                "timestamp": datetime.now(timezone.utc).isoformat()
-            },
+            valores_despues={"usuario": user.nombre_usuario, "resultado": "contraseña_incorrecta", "intentos_fallidos": user.intentos_fallidos},
             request=request,
             descripcion=f"Login fallido: contraseña incorrecta para {user.nombre_usuario}"
         )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Credenciales inválidas",
-            headers={"WWW-Authenticate": "Bearer"},
+
+        if is_being_locked:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Usuario bloqueado. Inténtelo de nuevo en {LOCKOUT_TIME_MINUTES} minuto(s) y 0 segundo(s)."
+            )
+        else:
+            remaining_attempts = MAX_FAILED_ATTEMPTS - user.intentos_fallidos
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Contraseña incorrecta. Le quedan {remaining_attempts} intento(s).",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    else:
+        # --- Login Exitoso ---
+        user.intentos_fallidos = 0
+        user.bloqueado_hasta = None
+        user.estado = EstadoEnum.activo
+
+        try:
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error interno del servidor al procesar el login exitoso.")
+
+        user_roles = [rol.nombre_rol for rol in user.persona.roles] if user.persona and user.persona.roles else []
+        access_token_expires = timedelta(minutes=auth_utils.ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = auth_utils.create_access_token(
+            data={"sub": user.nombre_usuario, "roles": user_roles},
+            expires_delta=access_token_expires
         )
+        
+        AuditService.log_login(db=db, usuario_id=user.usuario_id, request=request, success=True)
+        return {"access_token": access_token, "token_type": "bearer"}
 
-    user.intentos_fallidos = 0
-    user.bloqueado_hasta = None # Reiniciar a None es correcto
-    if user.estado == EstadoEnum.bloqueado: # Usa EstadoEnum directamente
-        user.estado = EstadoEnum.activo # Usa EstadoEnum directamente
-
-    try:
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error interno del servidor al procesar el login exitoso."
-        )
-
-    # Ahora obtén los roles de la persona asociada al usuario
-    user_roles = [rol.nombre_rol for rol in user.persona.roles] if user.persona and user.persona.roles else []
-
-
-    access_token_expires = timedelta(minutes=auth_utils.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = auth_utils.create_access_token(
-        # Incluye los roles en el token JWT
-        data={"sub": user.nombre_usuario, "roles": user_roles},
-        expires_delta=access_token_expires
-    )
-    # Log de login exitoso
-    AuditService.log_login(
-        db=db,
-        usuario_id=user.usuario_id,
-        request=request,
-        success=True
-    )
-
-    return {"access_token": access_token, "token_type": "bearer"}
-
-# Endpoint para obtener los menús del usuario actual
 @router.get("/me/menus", response_model=List[MenuInDB])
-def read_user_menus(
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user)
-):
-    """
-    Obtiene la lista de menús a los que el usuario autenticado tiene acceso
-    basado en sus roles.
-    """
+def read_user_menus(current_user: Usuario = Depends(auth_utils.get_current_active_user)):
     if not current_user.persona or not current_user.persona.roles:
         return []
-
-    # Usar un set para evitar menús duplicados si un usuario tiene múltiples roles
-    # que dan acceso al mismo menú.
     user_menus = {menu for rol in current_user.persona.roles for menu in rol.menus}
-    
-    # Ordenar los menús por ID para una presentación consistente
-    sorted_menus = sorted(list(user_menus), key=lambda menu: menu.menu_id)
-    
-    
-    return sorted_menus
+    return sorted(list(user_menus), key=lambda menu: menu.menu_id)
 
 @router.get("/me/menus-with-roles")
-def read_user_menus_with_roles(
-    db: Session = Depends(get_db),
-    current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user)
-):
-    """
-    Obtiene la lista de menús con información de roles para filtrado dinámico.
-    Devuelve todos los menús accesibles con la relación rol_menu incluida.
-    """
+def read_user_menus_with_roles(db: Session = Depends(get_db), current_user: Usuario = Depends(auth_utils.get_current_active_user)):
     if not current_user.persona or not current_user.persona.roles:
         return []
-
-    # Obtener todos los IDs de roles del usuario
     user_role_ids = [rol.rol_id for rol in current_user.persona.roles]
-
-
-
-    # Query que trae menús con sus relaciones rol_menus precargadas
     menus_query = db.query(Menu).options(
         joinedload(Menu.rol_menus).joinedload(RolMenu.rol)
     ).join(RolMenu, Menu.menu_id == RolMenu.menu_id).filter(
         RolMenu.rol_id.in_(user_role_ids)
     ).distinct()
-
     menus = menus_query.all()
-
-    # Convertir a diccionarios serializables
-    result = []
-    for menu in menus:
-        menu_dict = {
-            "menu_id": menu.menu_id,
-            "nombre": menu.nombre,
-            "ruta": menu.ruta,
-            "descripcion": menu.descripcion,
-            "icono": menu.icono,
-            "rol_menu": [
-                {
-                    "rol": {
-                        "rol_id": rm.rol.rol_id,
-                        "nombre_rol": rm.rol.nombre_rol
-                    }
-                }
-                for rm in menu.rol_menus
-            ]
-        }
-        result.append(menu_dict)
-
-    # Ordenar por menu_id
+    result = [
+        {
+            "menu_id": menu.menu_id, "nombre": menu.nombre, "ruta": menu.ruta,
+            "descripcion": menu.descripcion, "icono": menu.icono,
+            "rol_menu": [{"rol": {"rol_id": rm.rol.rol_id, "nombre_rol": rm.rol.nombre_rol}} for rm in menu.rol_menus]
+        } for menu in menus
+    ]
     result.sort(key=lambda m: m["menu_id"])
-
-
     return result
 
-# Endpoint para solicitar un código de recuperación de contraseña
 @router.post("/forgot-password-request", status_code=status.HTTP_200_OK)
-async def forgot_password_request(
-    request: ForgotPasswordRequest,
-    db: Session = Depends(get_db)
-):
-    """
-    Inicia el proceso de recuperación de contraseña.
-    Genera un código, lo almacena y lo envía al correo del usuario.
-    """
-    # Buscar usuario por nombre de usuario
-    user = db.query(Usuario).options( # Usar directamente Usuario
-        joinedload(Usuario.persona) # Cargar la persona asociada
-    ).filter(Usuario.nombre_usuario == request.username_or_email).first()
-
-    # Si no se encuentra por nombre de usuario, buscar por email de la persona asociada
+async def forgot_password_request(request: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    user = db.query(Usuario).options(joinedload(Usuario.persona)).filter(Usuario.nombre_usuario == request.username_or_email).first()
     if not user:
-        persona = db.query(DBPersona).options(
-            joinedload(DBPersona.usuario) # Cargar el usuario asociado a la persona
-        ).filter(DBPersona.email == request.username_or_email).first()
+        persona = db.query(DBPersona).options(joinedload(DBPersona.usuario)).filter(DBPersona.email == request.username_or_email).first()
         if persona and persona.usuario:
             user = persona.usuario
-
-    if not user:
-        # Se devuelve un mensaje genérico por seguridad para no revelar si el usuario existe o no
-        return {"message": "Si la dirección de correo o el usuario son válidos, se ha enviado un código de recuperación."}
-
-    # Asegurarse de que la persona tenga un email antes de intentar enviar
-    user_email = user.persona.email if user.persona else None
-    if not user_email:
-        return {"message": "Si la dirección de correo o el usuario son válidos, se ha enviado un código de recuperación."}
-
+    if not user or not (user.persona and user.persona.email) or user.estado == EstadoEnum.inactivo:
+        # Por seguridad, no revelamos si el usuario no existe, no tiene email, o está inactivo.
+        return {"message": f"Si la dirección de correo o el usuario son válidos , se ha enviado un código de recuperación."}
+    
     recovery_code = auth_utils.generate_recovery_code()
-    expiration_time = datetime.now(timezone.utc) + timedelta(minutes=auth_utils.RECOVERY_CODE_EXPIRE_MINUTES) # Almacenar como timezone-aware
-
+    expiration_time = datetime.utcnow() + timedelta(minutes=auth_utils.RECOVERY_CODE_EXPIRE_MINUTES)
     user.codigo_recuperacion = recovery_code
     user.expiracion_codigo_recuperacion = expiration_time
     try:
@@ -315,100 +204,61 @@ async def forgot_password_request(
         db.refresh(user)
     except Exception as e:
         db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error interno del servidor al procesar la solicitud de recuperación."
-        )
-
-    # Aquí iría la lógica para enviar el email real
-    auth_utils.send_recovery_email(user_email, user.nombre_usuario, recovery_code)
-
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error interno del servidor al procesar la solicitud de recuperación.")
+    
+    auth_utils.send_recovery_email(user.persona.email, user.nombre_usuario, recovery_code)
     return {"message": "Si la dirección de correo o el usuario son válidos, se ha enviado un código de recuperación."}
 
-# Endpoint para restablecer la contraseña usando el código
 @router.post("/reset-password", status_code=status.HTTP_200_OK)
-def reset_password(
-    request: ResetPasswordRequest,
-    db: Session = Depends(get_db)
-):
-    """
-    Restablece la contraseña de un usuario usando un código de recuperación válido.
-    También desbloquea y activa la cuenta si estaba bloqueada/inactiva.
-    """
-    # Buscar usuario por nombre de usuario
-    user = db.query(Usuario).options( # Usar directamente Usuario
-        joinedload(Usuario.persona) # Cargar la persona asociada
-    ).filter(Usuario.nombre_usuario == request.username_or_email).first()
-
-    # Si no se encuentra por nombre de usuario, buscar por email de la persona asociada
+def reset_password(request: ResetPasswordRequest, db: Session = Depends(get_db)):
+    user = db.query(Usuario).options(joinedload(Usuario.persona)).filter(Usuario.nombre_usuario == request.username_or_email).first()
     if not user:
-        persona = db.query(DBPersona).options(
-            joinedload(DBPersona.usuario)
-        ).filter(DBPersona.email == request.username_or_email).first()
+        persona = db.query(DBPersona).options(joinedload(DBPersona.usuario)).filter(DBPersona.email == request.username_or_email).first()
         if persona and persona.usuario:
             user = persona.usuario
-
     if not user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Usuario o correo electrónico no encontrado.")
+
+    # No permitir el reseteo de contraseña para usuarios inactivos
+    if user.estado == EstadoEnum.inactivo:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Usuario o correo electrónico no encontrado."
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Esta cuenta está inactiva y no puede restablecer la contraseña. Comuníquese con un administrador."
         )
 
+    current_utc_naive = datetime.utcnow()
+    
+    # Asegurarse de que la comparación de fechas sea siempre naive vs naive
+    expiracion_naive = user.expiracion_codigo_recuperacion
+    if expiracion_naive and expiracion_naive.tzinfo is not None:
+        expiracion_naive = expiracion_naive.replace(tzinfo=None)
 
-    # Asegurarse de que el campo `expiracion_codigo_recuperacion` sea timezone-aware
-    user_expiracion_codigo_recuperacion_aware = make_datetime_utc_aware(user.expiracion_codigo_recuperacion)
-    current_utc_time = datetime.now(timezone.utc)
-
-
-    if not user.codigo_recuperacion or user.codigo_recuperacion != request.recovery_code:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Código de recuperación inválido o usuario/email incorrecto."
-        )
-
-    if user_expiracion_codigo_recuperacion_aware is None or current_utc_time > user_expiracion_codigo_recuperacion_aware:
-        # Si el código expiró o es nulo (ya usado/no generado), se limpia y se informa
-        user.codigo_recuperacion = None
-        user.expiracion_codigo_recuperacion = None # Esto es correcto para reiniciar a None (naive o no)
-        try:
-            db.add(user)
-            db.commit()
-        except Exception as e:
-            db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Código de recuperación expirado o inválido. Por favor, solicita uno nuevo."
-        )
+    if not user.codigo_recuperacion or user.codigo_recuperacion != request.recovery_code or expiracion_naive is None or current_utc_naive > expiracion_naive:
+        if user.codigo_recuperacion:
+            user.codigo_recuperacion = None
+            user.expiracion_codigo_recuperacion = None
+            try:
+                db.add(user)
+                db.commit()
+            except Exception:
+                db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Código de recuperación expirado o inválido. Por favor, solicita uno nuevo.")
 
     user.contraseña = auth_utils.get_password_hash(request.new_password)
-
-    # Reiniciar campos de recuperación y estado de bloqueo
     user.codigo_recuperacion = None
-    user.expiracion_codigo_recuperacion = None # Esto es correcto para reiniciar a None
+    user.expiracion_codigo_recuperacion = None
     user.intentos_fallidos = 0
-    user.bloqueado_hasta = None # Esto es correcto para reiniciar a None
-    user.estado = EstadoEnum.activo # Asegurarse de que el usuario esté activo
-
+    user.bloqueado_hasta = None
+    user.estado = EstadoEnum.activo
     try:
         db.add(user)
         db.commit()
         db.refresh(user)
     except Exception as e:
         db.rollback()
-        
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error interno del servidor al restablecer la contraseña."
-        )
-
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error interno del servidor al restablecer la contraseña.")
     return {"message": "Contraseña restablecida exitosamente. Ahora puede iniciar sesión."}
 
-# Endpoint para obtener información del usuario actual (requiere token)
 @router.get("/me", response_model=UsuarioReadAudit)
-def read_users_me(current_user: auth_utils.Usuario = Depends(auth_utils.get_current_active_user)):
-    """
-    Obtiene la información del usuario actualmente autenticado.
-    Esta función depende de que `auth_utils.get_current_active_user`
-    cargue correctamente las relaciones `persona` y `roles` del usuario.
-    """
+def read_users_me(current_user: Usuario = Depends(auth_utils.get_current_active_user)):
     return current_user

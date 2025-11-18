@@ -20,3 +20,4 @@ class MovimientoInventario(Base):
     # Relaciones para acceder a los objetos completos de Producto y Usuario
     producto = relationship("Producto")
     usuario = relationship("Usuario")
+    detalles = relationship("DetalleMovimientoInventario", back_populates="movimiento", cascade="all, delete-orphan")

@@ -28,3 +28,4 @@ class TipoMovimientoEnum(str, Enum):
     ajuste_positivo = "ajuste_positivo"
     ajuste_negativo = "ajuste_negativo"
     uso_interno = "uso_interno"
+    devolucion = "devolucion"
