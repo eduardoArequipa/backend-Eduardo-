@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import date, datetime
+from decimal import Decimal
 
 # --- Esquemas existentes ---
 
@@ -36,8 +37,8 @@ class TopPurchasedProduct(BaseModel):
 class LowStockProduct(BaseModel):
     producto_id: int
     nombre: str
-    stock: int
-    stock_minimo: Optional[int]
+    stock: Decimal
+    stock_minimo: Optional[Decimal]
 
 class PurchaseStats(BaseModel):
     top_suppliers: List[TopSupplier]
@@ -68,8 +69,8 @@ class ProductDetail(BaseModel):
     nombre: str
     categoria: str
     marca: Optional[str] = None
-    stock_actual: int
-    stock_minimo: int
+    stock_actual: Decimal
+    stock_minimo: Decimal
     precio_venta: float
     precio_compra: float
     margen_ganancia: float  # Calculado como porcentaje

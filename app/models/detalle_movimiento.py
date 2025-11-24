@@ -14,7 +14,7 @@ class DetalleMovimientoInventario(Base):
     conversion_id = Column(Integer, ForeignKey('conversiones.id'), nullable=True)
     
     # La cantidad para esta línea de detalle específica (ej. cantidad de 'cajas' o 'metros')
-    cantidad = Column(Numeric(10, 3), nullable=False)
+    cantidad = Column(Numeric(10, 2), nullable=False)
 
     # Relaciones
     movimiento = relationship("MovimientoInventario", back_populates="detalles")

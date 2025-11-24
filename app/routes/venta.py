@@ -62,8 +62,8 @@ def calcular_stock_en_unidad_minima(producto: DBProducto, cantidad_vendida: Deci
     Returns:
         Decimal: La cantidad a descontar del stock en unidad mínima
     """
-    # Si se vende en "Unidad" (unidad mínima), no hay conversión necesaria
-    if not presentacion_venta or presentacion_venta == 'Unidad':
+    # Si se vende en "Unidad" (unidad mínima) o en la unidad base del producto, no hay conversión necesaria
+    if not presentacion_venta or presentacion_venta == 'Unidad' or (producto.unidad_inventario and presentacion_venta == producto.unidad_inventario.nombre_unidad):
         return cantidad_vendida
     
     # Buscar la conversión correspondiente y verificar que sea para venta
@@ -147,7 +147,7 @@ async def create_venta(
         db.flush()
 
         for detalle_data in venta_data.detalles:
-            producto = db.query(DBProducto).options(joinedload(DBProducto.conversiones)).filter(DBProducto.producto_id == detalle_data.producto_id).first()
+            producto = db.query(DBProducto).options(joinedload(DBProducto.conversiones), joinedload(DBProducto.unidad_inventario)).filter(DBProducto.producto_id == detalle_data.producto_id).first()
             stock_a_descontar = calcular_stock_en_unidad_minima(producto, Decimal(str(detalle_data.cantidad)), getattr(detalle_data, 'presentacion_venta', 'Unidad'))
             
             if producto.stock < stock_a_descontar:
@@ -280,7 +280,8 @@ async def anular_venta(
         product_ids = [d.producto_id for d in db_venta.detalles]
         products_map = {
             p.producto_id: p for p in db.query(DBProducto).options(
-                joinedload(DBProducto.conversiones)
+                joinedload(DBProducto.conversiones),
+                joinedload(DBProducto.unidad_inventario)
             ).filter(DBProducto.producto_id.in_(product_ids)).all()
         }
 

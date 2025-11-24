@@ -8,7 +8,7 @@ class DetalleVenta(Base):
     detalle_id = Column(Integer, primary_key=True, index=True)
     venta_id = Column(Integer, ForeignKey("ventas.venta_id"), nullable=False)
     producto_id = Column(Integer, ForeignKey("productos.producto_id"), nullable=False)
-    cantidad = Column(DECIMAL(10, 3), nullable=False)
+    cantidad = Column(DECIMAL(10, 2), nullable=False)
     precio_unitario = Column(DECIMAL(10, 2), nullable=False)
     presentacion_venta = Column(String(50), nullable=True) # Campo para la unidad de venta (ej: "Caja", "Unidad")
 

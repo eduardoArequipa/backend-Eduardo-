@@ -12,7 +12,7 @@ from .pagination import Pagination # Importar la clase Pagination
 
 class DetalleCompraBase(BaseModel):
     producto_id: int 
-    cantidad: int 
+    cantidad: Decimal 
     precio_unitario: Decimal    
     model_config = ConfigDict(json_encoders={Decimal: str})
 
@@ -25,7 +25,7 @@ class DetalleCompraUpdate(DetalleCompraBase):
      # En una actualización, podrías enviar el detalle_id si necesitas identificarlo
      detalle_id: int
      producto_id: Optional[int] = None  
-     cantidad: Optional[int] = None
+     cantidad: Optional[Decimal] = None
      precio_unitario: Optional[Decimal] = None
 
      # Configuración para manejar Decimal correctamente
@@ -64,7 +64,7 @@ class CompraCreate(CompraBase):
 
 class DetalleCompraBase(BaseModel):
     producto_id: int 
-    cantidad: int 
+    cantidad: Decimal 
     precio_unitario: Decimal
     presentacion_compra: Optional[str] = None # Nuevo campo
 
@@ -79,7 +79,7 @@ class DetalleCompraUpdate(DetalleCompraBase):
      # En una actualización, podrías enviar el detalle_id si necesitas identificarlo
      detalle_id: int
      producto_id: Optional[int] = None  
-     cantidad: Optional[int] = None
+     cantidad: Optional[Decimal] = None
      precio_unitario: Optional[Decimal] = None
      presentacion_compra: Optional[str] = None # Nuevo campo
 

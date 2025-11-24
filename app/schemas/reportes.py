@@ -65,7 +65,7 @@ class ReporteProductoItem(BaseModel):
     categoria_nombre: str
     marca_nombre: str
     stock_actual: Decimal
-    stock_minimo: int
+    stock_minimo: Decimal
     precio_compra: Decimal
     precio_venta: Decimal
     unidad_medida: str

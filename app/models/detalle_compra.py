@@ -1,5 +1,5 @@
 # backEnd/app/models/detalle_compra.py
-from sqlalchemy import Column, Integer, Float, ForeignKey, String
+from sqlalchemy import Column, Integer, Float, ForeignKey, String, DECIMAL
 from sqlalchemy.orm import relationship
 from .base import Base
 
@@ -9,7 +9,7 @@ class DetalleCompra(Base):
     detalle_id = Column(Integer, primary_key=True, index=True)
     compra_id = Column(Integer, ForeignKey('compras.compra_id', ondelete='CASCADE'))
     producto_id = Column(Integer, ForeignKey('productos.producto_id'))
-    cantidad = Column(Integer, nullable=False)
+    cantidad = Column(DECIMAL(10, 2), nullable=False)
     precio_unitario = Column(Float, nullable=False)
     presentacion_compra = Column(String(50), nullable=True) # Nuevo campo
     

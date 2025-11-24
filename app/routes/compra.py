@@ -161,7 +161,7 @@ def create_compra(
         db_detalles = []
         
         product_ids = {detalle.producto_id for detalle in compra_data.detalles}
-        products_map = {p.producto_id: p for p in db.query(DBProducto).filter(DBProducto.producto_id.in_(product_ids)).options(joinedload(DBProducto.conversiones)).all()}
+        products_map = {p.producto_id: p for p in db.query(DBProducto).filter(DBProducto.producto_id.in_(product_ids)).options(joinedload(DBProducto.conversiones), joinedload(DBProducto.unidad_inventario)).all()}
 
         for detalle_data in compra_data.detalles:
             db_producto = products_map.get(detalle_data.producto_id)
@@ -173,8 +173,12 @@ def create_compra(
 
             # Validar presentación si existe
             if detalle_data.presentacion_compra:
+                # Validar si es la unidad base
+                es_unidad_base = db_producto.unidad_inventario and detalle_data.presentacion_compra == db_producto.unidad_inventario.nombre_unidad
+                
                 conversion = next((c for c in db_producto.conversiones if c.nombre_presentacion == detalle_data.presentacion_compra and c.es_para_compra), None)
-                if not conversion:
+                
+                if not conversion and not es_unidad_base:
                     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"La presentación de compra '{detalle_data.presentacion_compra}' no es válida o no está habilitada para compras en el producto '{db_producto.nombre}'.")
 
             precio_unitario_final = detalle_data.precio_unitario
@@ -385,7 +389,7 @@ def update_compra(
             new_detalles = []
             
             product_ids = {d.producto_id for d in compra_update.detalles}
-            products_map = {p.producto_id: p for p in db.query(DBProducto).filter(DBProducto.producto_id.in_(product_ids)).options(joinedload(DBProducto.conversiones)).all()}
+            products_map = {p.producto_id: p for p in db.query(DBProducto).filter(DBProducto.producto_id.in_(product_ids)).options(joinedload(DBProducto.conversiones), joinedload(DBProducto.unidad_inventario)).all()}
 
             for detalle_data in compra_update.detalles:
                 db_producto = products_map.get(detalle_data.producto_id)
@@ -397,8 +401,11 @@ def update_compra(
 
                 # Validar presentación
                 if detalle_data.presentacion_compra:
+                    # Validar si es la unidad base
+                    es_unidad_base = db_producto.unidad_inventario and detalle_data.presentacion_compra == db_producto.unidad_inventario.nombre_unidad
+
                     conversion = next((c for c in db_producto.conversiones if c.nombre_presentacion == detalle_data.presentacion_compra and c.es_para_compra), None)
-                    if not conversion:
+                    if not conversion and not es_unidad_base:
                         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Presentación '{detalle_data.presentacion_compra}' no válida o no está habilitada para compras en '{db_producto.nombre}'.")
 
                 precio_unitario = detalle_data.precio_unitario
@@ -508,7 +515,8 @@ def completar_compra(
     de los productos asociados, utilizando PROMEDIO PONDERADO para múltiples presentaciones.
     """
     db_compra = db.query(DBCompra).options(
-        joinedload(DBCompra.detalles).joinedload(DBDetalleCompra.producto).joinedload(DBProducto.conversiones)
+        joinedload(DBCompra.detalles).joinedload(DBDetalleCompra.producto).joinedload(DBProducto.conversiones),
+        joinedload(DBCompra.detalles).joinedload(DBDetalleCompra.producto).joinedload(DBProducto.unidad_inventario)
     ).filter(DBCompra.compra_id == compra_id).first()
 
     if db_compra is None:
@@ -549,7 +557,7 @@ def completar_compra(
 
             # Calcular factor de conversión para este detalle
             conversion_factor = Decimal(1)
-            if detalle.presentacion_compra and detalle.presentacion_compra != 'Unidad':
+            if detalle.presentacion_compra and (not db_producto.unidad_inventario or detalle.presentacion_compra != db_producto.unidad_inventario.nombre_unidad):
                 presentacion_nombre = detalle.presentacion_compra.strip()
                 conversion = next((c for c in db_producto.conversiones 
                                  if c.nombre_presentacion.lower() == presentacion_nombre.lower() 

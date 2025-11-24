@@ -11,10 +11,10 @@ class MovimientoInventario(Base):
     producto_id = Column(Integer, ForeignKey('productos.producto_id'), nullable=False)
     usuario_id = Column(Integer, ForeignKey('usuarios.usuario_id'), nullable=False)
     tipo_movimiento = Column(String(20), nullable=False)
-    cantidad = Column(Numeric(10, 3), nullable=False)
+    cantidad = Column(Numeric(10, 2), nullable=False)
     motivo = Column(Text)
-    stock_anterior = Column(Numeric(10, 3), nullable=False)
-    stock_nuevo = Column(Numeric(10, 3), nullable=False)
+    stock_anterior = Column(Numeric(10, 2), nullable=False)
+    stock_nuevo = Column(Numeric(10, 2), nullable=False)
     fecha_movimiento = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
     # Relaciones para acceder a los objetos completos de Producto y Usuario

@@ -202,17 +202,17 @@ def create_report_pdf(data: list, resumen: dict, titulo: str, periodo: str, tipo
     # Crear tabla de resumen según el tipo de reporte
     if tipo_reporte == "ventas":
         resumen_data = [
-            ["Total de Ventas:", f"S/ {resumen.get('total_ventas', 0):.2f}"],
+            ["Total de Ventas:", f" {resumen.get('total_ventas', 0):.2f}"],
             ["Cantidad de Ventas:", str(resumen.get('cantidad_ventas', 0))],
-            ["Promedio por Venta:", f"S/ {resumen.get('promedio_venta', 0):.2f}"],
+            ["Promedio por Venta:", f" {resumen.get('promedio_venta', 0):.2f}"],
             ["Producto más vendido:", resumen.get('producto_mas_vendido', 'N/A')],
             ["Categoría más vendida:", resumen.get('categoria_mas_vendida', 'N/A')]
         ]
     elif tipo_reporte == "compras":
         resumen_data = [
-            ["Total de Compras:", f"S/ {resumen.get('total_compras', 0):.2f}"],
+            ["Total de Compras:", f" {resumen.get('total_compras', 0):.2f}"],
             ["Cantidad de Compras:", str(resumen.get('cantidad_compras', 0))],
-            ["Promedio por Compra:", f"S/ {resumen.get('promedio_compra', 0):.2f}"],
+            ["Promedio por Compra:", f" {resumen.get('promedio_compra', 0):.2f}"],
             ["Proveedor más frecuente:", resumen.get('proveedor_mas_frecuente', 'N/A')],
             ["Categoría más comprada:", resumen.get('categoria_mas_comprada', 'N/A')]
         ]
@@ -222,7 +222,7 @@ def create_report_pdf(data: list, resumen: dict, titulo: str, periodo: str, tipo
             ["Productos con Stock:", str(resumen.get('productos_con_stock', 0))],
             ["Productos sin Stock:", str(resumen.get('productos_sin_stock', 0))],
             ["Productos Stock Bajo:", str(resumen.get('productos_stock_bajo', 0))],
-            ["Valor del Inventario:", f"S/ {resumen.get('valor_inventario', 0):.2f}"]
+            ["Valor del Inventario:", f" {resumen.get('valor_inventario', 0):.2f}"]
         ]
     
     resumen_table = Table(resumen_data, colWidths=[3*inch, 2*inch])
@@ -255,9 +255,9 @@ def create_report_pdf(data: list, resumen: dict, titulo: str, periodo: str, tipo
                 row.get('vendedor_nombre', 'N/A'),
                 row['producto_nombre'],
                 row['categoria_nombre'],
-                f"{row['cantidad']:.1f}",
-                f"S/ {row['precio_unitario']:.2f}",
-                f"S/ {float(row['cantidad']) * float(row['precio_unitario']):.2f}"
+                f"{row['cantidad']:.2f}",
+                f" {row['precio_unitario']:.2f}",
+                f" {float(row['cantidad']) * float(row['precio_unitario']):.2f}"
             ])
     elif tipo_reporte == "compras":
         headers = ["ID", "Fecha", "Proveedor", "Empleado", "Producto", "Categoría", "Cant.", "P.Compra", "Subtotal"]
@@ -271,9 +271,9 @@ def create_report_pdf(data: list, resumen: dict, titulo: str, periodo: str, tipo
                 row.get('empleado_nombre', 'N/A'),
                 row['producto_nombre'],
                 row['categoria_nombre'],
-                f"{row['cantidad']:.1f}",
-                f"S/ {row['precio_compra']:.2f}",
-                f"S/ {float(row['cantidad']) * float(row['precio_compra']):.2f}"
+                f"{row['cantidad']:.2f}",
+                f"{row['precio_compra']:.2f}",
+                f"{float(row['cantidad']) * float(row['precio_compra']):.2f}"
             ])
     else:  # productos
         headers = ["Código", "Producto", "Categoría", "Marca", "Stock", "Stock Mín.", "P.Compra", "P.Venta", "Estado"]
@@ -285,10 +285,10 @@ def create_report_pdf(data: list, resumen: dict, titulo: str, periodo: str, tipo
                 row['nombre'],
                 row['categoria_nombre'],
                 row['marca_nombre'],
-                f"{row['stock_actual']:.1f}",
+                f"{row['stock_actual']:.2f}",
                 str(row['stock_minimo']),
-                f"S/ {row['precio_compra']:.2f}",
-                f"S/ {row['precio_venta']:.2f}",
+                f" {row['precio_compra']:.2f}",
+                f" {row['precio_venta']:.2f}",
                 row['estado']
             ])
 
@@ -332,13 +332,13 @@ def create_report_pdf(data: list, resumen: dict, titulo: str, periodo: str, tipo
     
     # Agregar totales generales según el tipo de reporte
     if tipo_reporte == "ventas" and resumen:
-        footer_info.append(["TOTAL GENERAL DE VENTAS:", f"S/ {resumen.get('total_ventas', 0):.2f}"])
+        footer_info.append(["TOTAL GENERAL DE VENTAS:", f" {resumen.get('total_ventas', 0):.2f}"])
         footer_info.append(["Número total de transacciones:", str(resumen.get('cantidad_ventas', 0))])
     elif tipo_reporte == "compras" and resumen:
-        footer_info.append(["TOTAL GENERAL DE COMPRAS:", f"S/ {resumen.get('total_compras', 0):.2f}"])
+        footer_info.append(["TOTAL GENERAL DE COMPRAS:", f" {resumen.get('total_compras', 0):.2f}"])
         footer_info.append(["Número total de compras:", str(resumen.get('cantidad_compras', 0))])
     elif tipo_reporte == "productos" and resumen:
-        footer_info.append(["VALOR TOTAL DEL INVENTARIO:", f"S/ {resumen.get('valor_inventario', 0):.2f}"])
+        footer_info.append(["VALOR TOTAL DEL INVENTARIO:", f" {resumen.get('valor_inventario', 0):.2f}"])
         footer_info.append(["Productos inventariados:", str(resumen.get('total_productos', 0))])
     
     footer_table = Table(footer_info, colWidths=[3*inch, 4*inch])
